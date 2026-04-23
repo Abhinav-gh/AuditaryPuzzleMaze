@@ -1,14 +1,52 @@
-// AudioManager.js — Rebuilt with gamification sounds + spatial beacon
-// Uses ONLY Web Audio API (no external deps)
+// AudioManager.js v4
+// New systems:
+//  - Ambient audio per cell type (soft looping, stops on move)
+//  - playNote(freq) for individual piano keys (chord puzzle)
+//  - playHoverPreview(cellType) for mouse direction scanning
+//  - playPing() on demand (P key) — no more continuous beacon
+//  - All sounds load from soundMap.js with synthesized fallback
+
+import { SOUND_MAP } from './audio/soundMap.js';
+
+// Piano key → frequency map (A=C4 through K=C5)
+export const PIANO_KEYS = {
+  a: { note: 'C',  freq: 261.6 },
+  s: { note: 'D',  freq: 293.7 },
+  d: { note: 'E',  freq: 329.6 },
+  f: { note: 'F',  freq: 349.2 },
+  g: { note: 'G',  freq: 392.0 },
+  h: { note: 'A',  freq: 440.0 },
+  j: { note: 'B',  freq: 493.9 },
+  k: { note: 'C5', freq: 523.3 },
+};
+
+// Chord definitions using PIANO_KEYS
+export const CHORDS = [
+  { name: 'C Major', keys: new Set(['a','d','g']), freqs: [261.6, 329.6, 392.0] },
+  { name: 'G Major', keys: new Set(['s','g','j']), freqs: [293.7, 392.0, 493.9] },
+  { name: 'F Major', keys: new Set(['f','h','a']), freqs: [349.2, 440.0, 261.6] },
+  { name: 'A Minor', keys: new Set(['h','a','d']), freqs: [440.0, 261.6, 329.6] },
+  { name: 'D Minor', keys: new Set(['s','f','h']), freqs: [293.7, 349.2, 440.0] },
+  { name: 'E Major', keys: new Set(['d','g','j']), freqs: [329.6, 392.0, 493.9] },
+];
+
+// Simon arrow note frequencies (spatially positioned)
+export const SIMON_NOTES = {
+  ArrowUp:    { freq: 523.3, pan: 0,    label: '↑' },
+  ArrowDown:  { freq: 130.8, pan: 0,    label: '↓' },
+  ArrowLeft:  { freq: 196.0, pan: -0.8, label: '←' },
+  ArrowRight: { freq: 329.6, pan: 0.8,  label: '→' },
+};
 
 export class AudioManager {
   constructor() {
     this.ctx = null;
-    this.exitBeacon = null;
-    this.beaconGain = null;
-    this.beaconLFO = null;
-    this.panner = null;
     this.isReady = false;
+    this.soundBuffers = {};
+    // Ambient state
+    this._ambientNodes = [];
+    // Active piano notes (for chord puzzle)
+    this._activeNotes = {};
   }
 
   async init() {
@@ -20,227 +58,430 @@ export class AudioManager {
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (this.ctx.state === 'suspended') await this.ctx.resume();
     this.isReady = true;
+    await this._preloadSounds();
   }
 
-  // ─── Footstep (soft wooden thud) ──────────────────────────────────────────
+  async _preloadSounds() {
+    for (const [name, config] of Object.entries(SOUND_MAP)) {
+      if (!config.file) continue;
+      try {
+        const res = await fetch(config.file);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const ab = await res.arrayBuffer();
+        this.soundBuffers[name] = await this.ctx.decodeAudioData(ab);
+      } catch (e) {
+        console.warn(`[AudioManager] "${name}" file load failed, using synthesis.`, e.message);
+      }
+    }
+  }
+
+  _play(name, synthFn, vol = 1) {
+    if (!this.isReady) return;
+    if (this.soundBuffers[name]) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.soundBuffers[name];
+      const g = this.ctx.createGain();
+      g.gain.value = vol;
+      src.connect(g); g.connect(this.ctx.destination);
+      src.start();
+    } else { synthFn(); }
+  }
+
+  // ─── AMBIENT (looping per-cell audio) ─────────────────────────────────────
+  // Types: 'path', 'puzzle', 'chord', 'rhythm', 'simon', 'exit'
+  playAmbient(type) {
+    this.stopAmbient();
+    if (!this.isReady) return;
+    const t = this.ctx.currentTime;
+
+    if (type === 'puzzle' || type === 'wordle') {
+      // Slow mysterious pulse
+      const main = this.ctx.createGain();
+      main.gain.value = 0;
+      main.gain.linearRampToValueAtTime(0.025, t + 0.5);
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine'; osc.frequency.value = 340;
+      const lfo = this.ctx.createOscillator();
+      lfo.type = 'sine'; lfo.frequency.value = 0.4;
+      const lfoG = this.ctx.createGain(); lfoG.gain.value = 30;
+      lfo.connect(lfoG); lfoG.connect(osc.frequency);
+      osc.connect(main); main.connect(this.ctx.destination);
+      osc.start(); lfo.start();
+      this._ambientNodes = [osc, lfo, main, lfoG];
+
+    } else if (type === 'chord') {
+      // Low diminished hum
+      const main = this.ctx.createGain();
+      main.gain.value = 0;
+      main.gain.linearRampToValueAtTime(0.02, t + 0.5);
+      [138.6, 174.6, 207.7].forEach(f => {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'triangle'; osc.frequency.value = f;
+        osc.connect(main); osc.start();
+        this._ambientNodes.push(osc);
+      });
+      main.connect(this.ctx.destination);
+      this._ambientNodes.push(main);
+
+    } else if (type === 'rhythm') {
+      // Faint metronome tick every 1.2s
+      this._startMetronomeAmbient();
+
+    } else if (type === 'simon') {
+      // Short musical stabs every 2s
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine'; osc.frequency.value = 523;
+      const env = this.ctx.createGain(); env.gain.value = 0;
+      osc.connect(env); env.connect(this.ctx.destination);
+      osc.start();
+      this._simonAmbientGain = env;
+      this._simonAmbientInterval = setInterval(() => {
+        if (!this.isReady) return;
+        const ct = this.ctx.currentTime;
+        env.gain.cancelScheduledValues(ct);
+        env.gain.setValueAtTime(0, ct);
+        env.gain.linearRampToValueAtTime(0.018, ct + 0.05);
+        env.gain.exponentialRampToValueAtTime(0.001, ct + 0.4);
+      }, 2000);
+      this._ambientNodes = [osc, env];
+
+    } else if (type === 'exit') {
+      // Bright shimmer
+      const main = this.ctx.createGain();
+      main.gain.value = 0;
+      main.gain.linearRampToValueAtTime(0.03, t + 0.5);
+      [784, 1047].forEach(f => {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine'; osc.frequency.value = f;
+        const lfo = this.ctx.createOscillator();
+        lfo.type = 'sine'; lfo.frequency.value = 3;
+        const lg = this.ctx.createGain(); lg.gain.value = 2;
+        lfo.connect(lg); lg.connect(osc.frequency);
+        osc.connect(main); osc.start(); lfo.start();
+        this._ambientNodes.push(osc, lfo, lg);
+      });
+      main.connect(this.ctx.destination);
+      this._ambientNodes.push(main);
+
+    } else if (type === 'danger_adj') {
+      // Very low rumble
+      const main = this.ctx.createGain();
+      main.gain.value = 0;
+      main.gain.linearRampToValueAtTime(0.04, t + 0.3);
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth'; osc.frequency.value = 40;
+      const lfo = this.ctx.createOscillator();
+      lfo.type = 'sine'; lfo.frequency.value = 1.2;
+      const lg = this.ctx.createGain(); lg.gain.value = 8;
+      lfo.connect(lg); lg.connect(osc.frequency);
+      osc.connect(main); main.connect(this.ctx.destination);
+      osc.start(); lfo.start();
+      this._ambientNodes = [osc, lfo, lg, main];
+    }
+    // 'path' — silence is fine
+  }
+
+  _startMetronomeAmbient() {
+    const tick = () => {
+      if (!this.isReady || !this._metronomeActive) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine'; osc.frequency.value = 660;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.022, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      osc.connect(g); g.connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + 0.1);
+      this._metronomeTimer = setTimeout(tick, 1200);
+    };
+    this._metronomeActive = true;
+    tick();
+  }
+
+  stopAmbient() {
+    this._metronomeActive = false;
+    clearTimeout(this._metronomeTimer);
+    clearInterval(this._simonAmbientInterval);
+    this._ambientNodes.forEach(n => {
+      try { n.stop?.(); } catch {}
+      try { n.disconnect?.(); } catch {}
+    });
+    this._ambientNodes = [];
+  }
+
+  // ─── FOOTSTEP ─────────────────────────────────────────────────────────────
   playFootstep() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.08, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 4);
-    }
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.35, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 800;
-    src.connect(filter);
-    filter.connect(g);
-    g.connect(this.ctx.destination);
-    src.start(t);
+    this._play('footstep', () => {
+      const t = this.ctx.currentTime;
+      const len = Math.round(this.ctx.sampleRate * 0.08);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+      const src = this.ctx.createBufferSource(); src.buffer = buf;
+      const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.35, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      src.connect(f); f.connect(g); g.connect(this.ctx.destination); src.start(t);
+    });
   }
 
-  // ─── WALL THUD (deep resonant OOF — inspired by Minecraft "oof") ──────────
+  // ─── WALL BUMP ────────────────────────────────────────────────────────────
   playWallBump() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    // Low thud
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(120, t);
-    osc.frequency.exponentialRampToValueAtTime(50, t + 0.15);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.5, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    osc.connect(g);
-    g.connect(this.ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.2);
-
-    // Add white noise burst for texture
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.05, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    const nSrc = this.ctx.createBufferSource();
-    nSrc.buffer = buf;
-    const ng = this.ctx.createGain();
-    ng.gain.setValueAtTime(0.2, t);
-    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-    nSrc.connect(ng);
-    ng.connect(this.ctx.destination);
-    nSrc.start(t);
+    this._play('wallBump', () => {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(140, t); osc.frequency.exponentialRampToValueAtTime(55, t + 0.18);
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.25);
+      const len = Math.round(this.ctx.sampleRate * 0.05);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const d = buf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const ns = this.ctx.createBufferSource(); ns.buffer = buf;
+      const ng = this.ctx.createGain(); ng.gain.setValueAtTime(0.15, t); ng.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      ns.connect(ng); ng.connect(this.ctx.destination); ns.start(t);
+    });
   }
 
-  // ─── COIN COLLECT sound (Mario-style rising ding) ─────────────────────────
+  // ─── COIN ─────────────────────────────────────────────────────────────────
   playCoin() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const freqs = [988, 1319]; // B5, E6
-    freqs.forEach((f, i) => {
-      const osc = this.ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.value = f;
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.15, t + i * 0.08);
-      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.15);
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start(t + i * 0.08);
-      osc.stop(t + i * 0.08 + 0.15);
+    this._play('coin', () => {
+      const t = this.ctx.currentTime;
+      [988, 1319].forEach((f, i) => {
+        const osc = this.ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f;
+        const g = this.ctx.createGain(); g.gain.setValueAtTime(0.12, t + i * 0.09); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.09 + 0.18);
+        osc.connect(g); g.connect(this.ctx.destination); osc.start(t + i * 0.09); osc.stop(t + i * 0.09 + 0.2);
+      });
     });
   }
 
-  // ─── PUZZLE UNLOCK (mysterious sparkle) ───────────────────────────────────
+  // ─── PUZZLE FOUND ─────────────────────────────────────────────────────────
   playPuzzleFound() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const notes = [523, 659, 784, 1047];
-    notes.forEach((f, i) => {
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(f, t + i * 0.12);
-      osc.frequency.linearRampToValueAtTime(f * 1.03, t + i * 0.12 + 0.1);
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0, t + i * 0.12);
-      g.gain.linearRampToValueAtTime(0.2, t + i * 0.12 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.25);
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start(t + i * 0.12);
-      osc.stop(t + i * 0.12 + 0.3);
+    this._play('puzzleFound', () => {
+      const t = this.ctx.currentTime;
+      [523, 659, 784, 1047].forEach((f, i) => {
+        const osc = this.ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = f;
+        const g = this.ctx.createGain(); g.gain.setValueAtTime(0, t + i * 0.13); g.gain.linearRampToValueAtTime(0.2, t + i * 0.13 + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.13 + 0.28);
+        osc.connect(g); g.connect(this.ctx.destination); osc.start(t + i * 0.13); osc.stop(t + i * 0.13 + 0.32);
+      });
     });
   }
 
-  // ─── CORRECT GUESS — Woohoo ascending ────────────────────────────────────
+  // ─── CORRECT ──────────────────────────────────────────────────────────────
   playCorrect() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const scale = [523, 659, 784, 1047, 1319];
-    scale.forEach((f, i) => {
-      const osc = this.ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = f;
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.18, t + i * 0.06);
-      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.12);
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start(t + i * 0.06);
-      osc.stop(t + i * 0.06 + 0.12);
+    this._play('correct', () => {
+      const t = this.ctx.currentTime;
+      [523, 659, 784, 1047, 1319].forEach((f, i) => {
+        const osc = this.ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = f;
+        const g = this.ctx.createGain(); g.gain.setValueAtTime(0.18, t + i * 0.065); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.065 + 0.13);
+        osc.connect(g); g.connect(this.ctx.destination); osc.start(t + i * 0.065); osc.stop(t + i * 0.065 + 0.15);
+      });
     });
   }
 
-  // ─── WRONG GUESS — descending buzzer ─────────────────────────────────────
+  // ─── WRONG ────────────────────────────────────────────────────────────────
   playWrong() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(300, t);
-    osc.frequency.exponentialRampToValueAtTime(100, t + 0.25);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.3, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    osc.connect(g);
-    g.connect(this.ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.3);
-  }
-
-  // ─── VICTORY — full jingle (Zelda-ish) ──────────────────────────────────
-  playVictory() {
-    if (!this.isReady) return;
-    const t = this.ctx.currentTime;
-    const jingle = [
-      { f: 523.25, start: 0,    dur: 0.12 },
-      { f: 523.25, start: 0.13, dur: 0.12 },
-      { f: 523.25, start: 0.26, dur: 0.12 },
-      { f: 415.30, start: 0.39, dur: 0.12 },
-      { f: 523.25, start: 0.52, dur: 0.12 },
-      { f: 659.25, start: 0.65, dur: 0.35 },
-    ];
-    jingle.forEach(({ f, start, dur }) => {
-      const osc = this.ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.value = f;
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.2, t + start);
-      g.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start(t + start);
-      osc.stop(t + start + dur + 0.05);
+    this._play('wrong', () => {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(); osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, t); osc.frequency.exponentialRampToValueAtTime(90, t + 0.28);
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.35);
     });
   }
 
-  // ─── LETTER HINT tone ─────────────────────────────────────────────────────
-  playLetterHint(index, total, isCorrect) {
+  // ─── VICTORY ──────────────────────────────────────────────────────────────
+  playVictory() {
+    this._play('victory', () => {
+      const t = this.ctx.currentTime;
+      const jingle = [
+        { f: 523.25, s: 0, d: 0.12 }, { f: 523.25, s: 0.14, d: 0.12 },
+        { f: 523.25, s: 0.28, d: 0.12 }, { f: 415.30, s: 0.42, d: 0.12 },
+        { f: 523.25, s: 0.56, d: 0.12 }, { f: 659.25, s: 0.70, d: 0.4  },
+      ];
+      jingle.forEach(({ f, s, d }) => {
+        const osc = this.ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f;
+        const g = this.ctx.createGain(); g.gain.setValueAtTime(0.2, t + s); g.gain.exponentialRampToValueAtTime(0.001, t + s + d);
+        osc.connect(g); g.connect(this.ctx.destination); osc.start(t + s); osc.stop(t + s + d + 0.05);
+      });
+    });
+  }
+
+  // ─── DANGER GROWL (spatial) ───────────────────────────────────────────────
+  playDangerGrowl(pan = 0, vol = 0.4) {
+    this._play('dangerGrowl', () => {
+      const t = this.ctx.currentTime;
+      const panner = this.ctx.createStereoPanner(); panner.pan.value = Math.max(-1, Math.min(1, pan));
+      const osc = this.ctx.createOscillator(); osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(55, t); osc.frequency.setValueAtTime(45, t + 0.1); osc.frequency.setValueAtTime(65, t + 0.2);
+      const bufLen = Math.round(this.ctx.sampleRate * 0.5);
+      const buf = this.ctx.createBuffer(1, bufLen, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * 0.3 * Math.sin(i / bufLen * Math.PI);
+      const ns = this.ctx.createBufferSource(); ns.buffer = buf;
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.08); g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      const flt = this.ctx.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 400;
+      osc.connect(flt); ns.connect(flt); flt.connect(g); g.connect(panner); panner.connect(this.ctx.destination);
+      osc.start(t); osc.stop(t + 0.6); ns.start(t);
+    });
+  }
+
+  // ─── DANGER HIT (jumpscare) ───────────────────────────────────────────────
+  playDangerHit() {
+    this._play('dangerHit', () => {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(); osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(800, t); osc.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.38);
+      const osc2 = this.ctx.createOscillator(); osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(120, t + 0.05); osc2.frequency.exponentialRampToValueAtTime(30, t + 0.4);
+      const g2 = this.ctx.createGain(); g2.gain.setValueAtTime(0.7, t + 0.05); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc2.connect(g2); g2.connect(this.ctx.destination); osc2.start(t + 0.05); osc2.stop(t + 0.5);
+    });
+  }
+
+  // ─── ON-DEMAND PING ───────────────────────────────────────────────────────
+  playPing(exitDir, distance) {
+    this._play('ping', () => {
+      const t = this.ctx.currentTime;
+      let pan = 0;
+      if (exitDir.includes('east')) pan = Math.min(1, distance * 0.25);
+      if (exitDir.includes('west')) pan = Math.max(-1, -distance * 0.25);
+      const panner = this.ctx.createStereoPanner(); panner.pan.value = pan;
+      const freq = Math.max(440, 1200 - distance * 100);
+      [freq, freq * 1.5].forEach((f, i) => {
+        const osc = this.ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = f;
+        const g = this.ctx.createGain(); g.gain.setValueAtTime(0, t + i * 0.12); g.gain.linearRampToValueAtTime(0.15, t + i * 0.12 + 0.03); g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.25);
+        osc.connect(g); g.connect(panner); panner.connect(this.ctx.destination); osc.start(t + i * 0.12); osc.stop(t + i * 0.12 + 0.28);
+      });
+    });
+  }
+
+  // ─── PIANO NOTE (chord puzzle — sustain while key held) ───────────────────
+  playNoteStart(key, freq) {
+    if (!this.isReady || this._activeNotes[key]) return;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle'; osc.frequency.value = freq;
+    const g = this.ctx.createGain();
+    const t = this.ctx.currentTime;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.2, t + 0.03);
+    osc.connect(g); g.connect(this.ctx.destination); osc.start();
+    this._activeNotes[key] = { osc, gain: g };
+  }
+
+  playNoteStop(key) {
+    const note = this._activeNotes[key];
+    if (!note) return;
+    const t = this.ctx.currentTime;
+    note.gain.gain.cancelScheduledValues(t);
+    note.gain.gain.setValueAtTime(note.gain.gain.value, t);
+    note.gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    setTimeout(() => { try { note.osc.stop(); } catch {} }, 200);
+    delete this._activeNotes[key];
+  }
+
+  stopAllNotes() {
+    Object.keys(this._activeNotes).forEach(k => this.playNoteStop(k));
+  }
+
+  // ─── CHORD PLAYBACK (replay target for chord puzzle) ──────────────────────
+  playChord(freqs, duration = 1.2, vol = 0.15) {
     if (!this.isReady) return;
     const t = this.ctx.currentTime;
-    // Map letter position to a musical scale frequency
-    const scale = [261, 294, 330, 349, 392, 440, 494, 523];
-    const freq = scale[index % scale.length];
-    const osc = this.ctx.createOscillator();
-    osc.type = isCorrect ? 'sine' : 'triangle';
-    osc.frequency.value = freq;
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.15, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-    osc.connect(g);
-    g.connect(this.ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.45);
+    freqs.forEach(f => {
+      const osc = this.ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = f;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.05);
+      g.gain.setValueAtTime(vol, t + duration - 0.15); g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + duration + 0.05);
+    });
   }
 
-  // ─── EXIT BEACON (subtle ping, not a constant drone) ─────────────────────
-  startBeacon() {
-    this._scheduleBeaconPing();
-  }
-
-  _scheduleBeaconPing() {
-    if (!this.isReady || !this.ctx) return;
+  // ─── SIMON ARROW NOTE (spatially panned) ──────────────────────────────────
+  playSimonNote(key, vol = 0.18, duration = 0.5) {
+    if (!this.isReady) return;
+    const note = SIMON_NOTES[key];
+    if (!note) return;
     const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = 740;
+    const panner = this.ctx.createStereoPanner(); panner.pan.value = note.pan;
+    const osc = this.ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = note.freq;
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.08, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    osc.connect(g);
-    g.connect(this.ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.35);
-    this._beaconTimer = setTimeout(() => this._scheduleBeaconPing(), 1800);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.03);
+    g.gain.setValueAtTime(vol, t + duration - 0.1); g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(g); g.connect(panner); panner.connect(this.ctx.destination);
+    osc.start(t); osc.stop(t + duration + 0.05);
   }
 
-  stopBeacon() {
-    clearTimeout(this._beaconTimer);
-    this._beaconTimer = null;
+  // ─── RHYTHM BEAT (for rhythm puzzle) ─────────────────────────────────────
+  playBeat(vol = 0.35) {
+    if (!this.isReady) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = 440;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.12);
   }
 
-  // ─── Update beacon interval based on distance ─────────────────────────────
-  updateBeaconRate(distance) {
-    // Closer = faster pings (min 500ms, max 2500ms)
-    const interval = Math.max(500, Math.min(2500, distance * 600));
-    if (this._beaconTimer) {
-      clearTimeout(this._beaconTimer);
-      this._beaconTimer = setTimeout(() => this._scheduleBeaconPing(), interval);
+  playMetronomeTick(isAccent = false) {
+    if (!this.isReady) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator(); osc.type = 'sine';
+    osc.frequency.value = isAccent ? 880 : 440;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(isAccent ? 0.25 : 0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.1);
+  }
+
+  // ─── MOUSE HOVER PREVIEW ──────────────────────────────────────────────────
+  // cellType: CELL constant value, dir: direction this adjacent cell is in
+  playHoverPreview(cellType, dir = 0) {
+    if (!this.isReady) return;
+    const t = this.ctx.currentTime;
+    const pan = dir === 'west' ? -0.6 : dir === 'east' ? 0.6 : 0;
+    const panner = this.ctx.createStereoPanner(); panner.pan.value = pan;
+
+    let freq, type, vol, dur;
+    switch (cellType) {
+      case 0: // PATH — soft step
+        freq = 350; type = 'sine'; vol = 0.07; dur = 0.08; break;
+      case 1: // WALL — dull thud
+        freq = 80;  type = 'sine'; vol = 0.2;  dur = 0.12; break;
+      case 2: // EXIT — bright ding
+        freq = 880; type = 'sine'; vol = 0.12; dur = 0.25; break;
+      case 3: // WORDLE — soft mystical
+        freq = 440; type = 'triangle'; vol = 0.08; dur = 0.18; break;
+      case 4: // CHORD — musical shimmer
+        freq = 523; type = 'triangle'; vol = 0.08; dur = 0.2; break;
+      case 5: // DANGER — short growl burst
+        this.playDangerGrowl(pan, 0.25); return;
+      case 6: // RHYTHM — metronome tick
+        freq = 550; type = 'square'; vol = 0.06; dur = 0.06; break;
+      case 7: // SIMON — directional note
+        freq = 392; type = 'sine'; vol = 0.08; dur = 0.18; break;
+      default:
+        freq = 300; type = 'sine'; vol = 0.05; dur = 0.08;
     }
+
+    const osc = this.ctx.createOscillator(); osc.type = type; osc.frequency.value = freq;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(g); g.connect(panner); panner.connect(this.ctx.destination);
+    osc.start(t); osc.stop(t + dur + 0.02);
+  }
+
+  // ─── LETTER HINT (Wordle per-letter sound) ────────────────────────────────
+  playLetterHint(index) {
+    if (!this.isReady) return;
+    const scale = [261, 294, 330, 349, 392, 440, 494, 523];
+    const f = scale[index % scale.length]; const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = f;
+    const g = this.ctx.createGain(); g.gain.setValueAtTime(0.1, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.18);
   }
 
   stopAll() {
-    this.stopBeacon();
-    if (this.ctx) {
-      setTimeout(() => {
-        this.ctx.suspend();
-        this.isReady = false;
-      }, 1200);
-    }
+    this.stopAmbient();
+    this.stopAllNotes();
+    if (this.ctx) setTimeout(() => { this.ctx.suspend(); this.isReady = false; }, 1200);
   }
 }
