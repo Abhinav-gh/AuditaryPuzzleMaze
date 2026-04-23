@@ -124,26 +124,12 @@ export class AudioManager {
       this._ambientNodes.push(main);
 
     } else if (type === 'rhythm') {
-      // Faint metronome tick every 1.2s
-      this._startMetronomeAmbient();
+      // Intentionally silent — metronome pulse was too annoying in ambient
+      return;
 
     } else if (type === 'simon') {
-      // Short musical stabs every 2s
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sine'; osc.frequency.value = 523;
-      const env = this.ctx.createGain(); env.gain.value = 0;
-      osc.connect(env); env.connect(this.ctx.destination);
-      osc.start();
-      this._simonAmbientGain = env;
-      this._simonAmbientInterval = setInterval(() => {
-        if (!this.isReady) return;
-        const ct = this.ctx.currentTime;
-        env.gain.cancelScheduledValues(ct);
-        env.gain.setValueAtTime(0, ct);
-        env.gain.linearRampToValueAtTime(0.018, ct + 0.05);
-        env.gain.exponentialRampToValueAtTime(0.001, ct + 0.4);
-      }, 2000);
-      this._ambientNodes = [osc, env];
+      // Intentionally silent — stab pulse was too annoying in ambient
+      return;
 
     } else if (type === 'exit') {
       // Bright shimmer

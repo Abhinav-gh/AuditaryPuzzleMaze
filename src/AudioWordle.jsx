@@ -29,7 +29,7 @@ function buildClueText(target) {
   return target.split('').map(l => PHONETICS[l]).join(' ... ');
 }
 
-export function AudioWordle({ audioManager, onSolve, onSkip }) {
+export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
   const [target] = useState(() => WORD_BANK[Math.floor(Math.random() * WORD_BANK.length)]);
   const [guesses, setGuesses] = useState([]);
   const [current, setCurrent] = useState('');
@@ -95,6 +95,11 @@ export function AudioWordle({ audioManager, onSolve, onSkip }) {
     const handler = (e) => {
       if (e.key === 'Escape') { onSkip(); return; }
       if (e.key === 'r' || e.key === 'R') { speakClue(); return; }
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); }
+        return;
+      }
       if (solved || failed) return;
       if (e.key === 'Enter') {
         if (current.length === 3) submitGuess();
@@ -197,12 +202,14 @@ export function AudioWordle({ audioManager, onSolve, onSkip }) {
         <div className="puzzle-shortcuts">
           <span><kbd>Enter</kbd> Submit</span>
           <span><kbd>R</kbd> Replay clue</span>
-          <span><kbd>Esc</kbd> Skip puzzle</span>
+          <span><kbd>Space</kbd> Silence narrator</span>
+          <span><kbd>Esc</kbd> Skip</span>
         </div>
 
-        <div className="wordle-footer">
-          <button className="skip-btn" onClick={onSkip}>
-            Skip puzzle (you'll be moved back)
+        <div className="wordle-footer puzzle-footer-row">
+          <button className="restart-btn" onClick={onRestart}>🔄 Restart</button>
+          <button className="skip-btn flex1" onClick={onSkip}>
+            Skip (move back)
           </button>
         </div>
       </div>

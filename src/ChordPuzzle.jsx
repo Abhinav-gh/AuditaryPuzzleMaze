@@ -1,17 +1,9 @@
-// ChordPuzzle.jsx v2 — Piano key hold mechanic
-// 
-// HOW IT WORKS:
-//   - Target chord plays automatically on entry
-//   - 8 piano keys shown on screen: A S D F G H J K = C D E F G A B C5
-//   - Physical keyboard keys play notes while HELD (like a real piano)
-//   - Hold any combination — when exactly 3 keys match the target chord → SOLVED!
-//   - Wrong 3-key combo held → life lost, try again
-//   - R = replay target chord | Escape = skip + revert
+// ChordPuzzle.jsx v3
+// Changes: removed lives system — wrong combo just gives feedback, no limit.
+// onRestart prop + Restart button added.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PIANO_KEYS, CHORDS } from './AudioManager';
-
-const MAX_LIVES = 3;
 
 function setsEqual(a, b) {
   if (a.size !== b.size) return false;
@@ -19,35 +11,37 @@ function setsEqual(a, b) {
   return true;
 }
 
-export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
+export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
   const [target] = useState(() => CHORDS[Math.floor(Math.random() * CHORDS.length)]);
   const [heldKeys, setHeldKeys] = useState(new Set());
-  const [lives, setLives] = useState(MAX_LIVES);
-  const [status, setStatus] = useState('playing'); // playing | correct | wrong | failed
-  const [lastAttemptKeys, setLastAttemptKeys] = useState(null);
-  const heldRef = useRef(new Set());
+  const [status, setStatus]     = useState('playing'); // playing | correct | wrong
+  const [lastAttempt, setLastAttempt] = useState(null); // Set of keys from last attempt
+  const heldRef      = useRef(new Set());
   const checkTimerRef = useRef(null);
-  const statusRef = useRef('playing');
+  const statusRef    = useRef('playing');
+  const replayLockRef = useRef(false);
 
   useEffect(() => { statusRef.current = status; }, [status]);
 
   const replayTarget = useCallback(() => {
+    if (replayLockRef.current) return;
+    replayLockRef.current = true;
     window.speechSynthesis?.cancel();
     audioManager?.playChord(target.freqs, 1.4);
-    const utter = new SpeechSynthesisUtterance(
-      `Target chord replayed. The chord name is hidden — find it by ear!`
-    );
+    const utter = new SpeechSynthesisUtterance('Target chord replayed.');
     window.speechSynthesis?.speak(utter);
+    setTimeout(() => {
+      replayLockRef.current = false;
+    }, 1500);
   }, [target, audioManager]);
 
-  // Speak instructions + play target
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const intro = `Chord puzzle! A chord will now play. Your keyboard keys A through K are piano keys. Hold 3 keys together that produce the same chord. Press R to replay the target chord. Press Escape to skip and be moved back.`;
+    const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys — C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits — keep trying! Press R to replay. Press Escape to skip.`;
     const utter = new SpeechSynthesisUtterance(intro);
     utter.rate = 0.9;
     window.speechSynthesis?.speak(utter);
-    setTimeout(() => audioManager?.playChord(target.freqs, 1.4), 3800);
+    setTimeout(() => audioManager?.playChord(target.freqs, 1.5), 4500);
   }, []);
 
   const checkChord = useCallback(() => {
@@ -55,7 +49,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
     const held = heldRef.current;
     if (held.size !== 3) return;
 
-    setLastAttemptKeys(new Set(held));
+    setLastAttempt(new Set(held));
 
     if (setsEqual(held, target.keys)) {
       setStatus('correct');
@@ -65,26 +59,12 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
       window.speechSynthesis?.speak(utter);
       setTimeout(() => onSolve(), 1800);
     } else {
-      setLives(prev => {
-        const newLives = prev - 1;
-        if (newLives <= 0) {
-          setStatus('failed');
-          audioManager?.playWrong();
-          const utter = new SpeechSynthesisUtterance(
-            `Wrong combination. Out of attempts! The chord was ${target.name}. Skip or keep your position.`
-          );
-          window.speechSynthesis?.speak(utter);
-        } else {
-          setStatus('wrong');
-          audioManager?.playWrong();
-          const utter = new SpeechSynthesisUtterance(
-            `Wrong combination. ${newLives} ${newLives === 1 ? 'attempt' : 'attempts'} left. Press R to replay. Keep exploring the keys.`
-          );
-          window.speechSynthesis?.speak(utter);
-          setTimeout(() => setStatus('playing'), 1200);
-        }
-        return newLives;
-      });
+      setStatus('wrong');
+      audioManager?.playWrong();
+      const held3 = [...held].map(k => PIANO_KEYS[k]?.note).join('+');
+      const utter = new SpeechSynthesisUtterance(`Wrong combination: ${held3}. Keep exploring — no limit on attempts!`);
+      window.speechSynthesis?.speak(utter);
+      setTimeout(() => setStatus('playing'), 1300);
     }
   }, [target, audioManager, onSolve]);
 
@@ -92,7 +72,12 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
     const onDown = (e) => {
       if (e.key === 'r' || e.key === 'R') { replayTarget(); return; }
       if (e.key === 'Escape') { audioManager?.stopAllNotes(); onSkip(); return; }
-      if (statusRef.current !== 'playing') return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); }
+        return;
+      }
+      if (statusRef.current === 'correct') return;
 
       const key = e.key.toLowerCase();
       if (!PIANO_KEYS[key] || heldRef.current.has(key)) return;
@@ -102,7 +87,6 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
       setHeldKeys(new Set(heldRef.current));
       audioManager?.playNoteStart(key, PIANO_KEYS[key].freq);
 
-      // When exactly 3 held, start a short timer then check
       if (heldRef.current.size === 3) {
         clearTimeout(checkTimerRef.current);
         checkTimerRef.current = setTimeout(checkChord, 350);
@@ -130,26 +114,22 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
     };
   }, [checkChord, replayTarget, onSkip, audioManager]);
 
-  const hearts = Array.from({ length: MAX_LIVES }, (_, i) => i < lives ? '❤️' : '🖤');
-
   return (
     <div className="wordle-overlay" role="dialog" aria-modal="true" aria-label="Chord Puzzle">
       <div className="wordle-panel chord-panel">
         <div className="wordle-header">
           <h2>🎹 Chord Puzzle</h2>
-          <p className="wordle-subtitle">Hold 3 piano keys to match the target chord</p>
-          <div className="lives-row">{hearts.join(' ')}</div>
+          <p className="wordle-subtitle">Hold 3 piano keys together to match the target chord</p>
         </div>
 
         <button className="chord-replay-btn" onClick={replayTarget}>
           🔊 Play Target Chord <span className="key-hint">R</span>
         </button>
 
-        {/* Status feedback */}
+        {/* Status */}
         <div className="chord-status-area">
           {status === 'correct' && <p className="chord-feedback correct-fb">✅ {target.name} — Correct!</p>}
-          {status === 'wrong'   && <p className="chord-feedback wrong-fb">❌ Wrong combo — try again</p>}
-          {status === 'failed'  && <p className="chord-feedback wrong-fb">💀 The chord was: {target.name}</p>}
+          {status === 'wrong'   && <p className="chord-feedback wrong-fb">❌ Wrong combo — try again, no limits!</p>}
           {status === 'playing' && heldKeys.size > 0 && (
             <p className="chord-feedback neutral-fb">
               Holding: {[...heldKeys].map(k => PIANO_KEYS[k]?.note).join(' + ')}
@@ -157,25 +137,21 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
             </p>
           )}
           {status === 'playing' && heldKeys.size === 0 && (
-            <p className="chord-help">Press and hold keys on your keyboard to explore notes.</p>
+            <p className="chord-help">Hold any 3 keys to play and test a chord.</p>
           )}
         </div>
 
-        {/* Piano keyboard visual */}
+        {/* Piano keyboard */}
         <div className="piano-keyboard" aria-label="Piano keyboard A through K">
-          {Object.entries(PIANO_KEYS).map(([key, { note, freq }]) => {
-            const isHeld = heldKeys.has(key);
-            const wasInAttempt = lastAttemptKeys?.has(key);
-            const isTarget = status === 'failed' || status === 'correct' ? target.keys.has(key) : false;
+          {Object.entries(PIANO_KEYS).map(([key, { note }]) => {
+            const isHeld   = heldKeys.has(key);
+            const isTarget = status === 'correct' ? target.keys.has(key) : false;
             return (
               <div
                 key={key}
-                className={`piano-key
-                  ${isHeld ? 'piano-key-held' : ''}
-                  ${isTarget ? 'piano-key-target' : ''}
-                `}
+                className={`piano-key ${isHeld ? 'piano-key-held' : ''} ${isTarget ? 'piano-key-target' : ''}`}
                 onMouseDown={() => {
-                  if (statusRef.current !== 'playing') return;
+                  if (statusRef.current === 'correct') return;
                   heldRef.current.add(key);
                   setHeldKeys(new Set(heldRef.current));
                   audioManager?.playNoteStart(key, PIANO_KEYS[key].freq);
@@ -198,7 +174,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
                     clearTimeout(checkTimerRef.current);
                   }
                 }}
-                aria-label={`Key ${key.toUpperCase()}: note ${note}`}
+                aria-label={`Key ${key.toUpperCase()}: ${note}`}
               >
                 <span className="piano-note">{note}</span>
                 <span className="piano-key-label">{key.toUpperCase()}</span>
@@ -208,18 +184,20 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip }) {
         </div>
 
         <p className="chord-instructions">
-          Hold multiple keys simultaneously. When you hold exactly the right 3 keys that make the chord, it auto-solves!
+          Hold multiple keys simultaneously. Exactly 3 keys = checks the chord automatically. No attempt limit!
         </p>
 
         <div className="puzzle-shortcuts">
           <span><kbd>A–K</kbd> Piano keys</span>
-          <span><kbd>R</kbd> Replay chord</span>
-          <span><kbd>Esc</kbd> Skip (move back)</span>
+          <span><kbd>R</kbd> Replay</span>
+          <span><kbd>Space</kbd> Silence narrator</span>
+          <span><kbd>Esc</kbd> Skip</span>
         </div>
 
-        <div className="wordle-footer">
-          <button className="skip-btn" onClick={() => { audioManager?.stopAllNotes(); onSkip(); }}>
-            Skip puzzle (you'll be moved back)
+        <div className="wordle-footer puzzle-footer-row">
+          <button className="restart-btn" onClick={onRestart}>🔄 Restart</button>
+          <button className="skip-btn flex1" onClick={() => { audioManager?.stopAllNotes(); onSkip(); }}>
+            Skip (move back)
           </button>
         </div>
       </div>

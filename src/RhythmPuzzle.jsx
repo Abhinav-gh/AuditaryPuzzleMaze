@@ -10,16 +10,16 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const BPM = 80;
 const BEAT_MS = (60 / BPM) * 1000; // ~750ms per beat
 
-// Generate a 4-beat pattern. Each gap is 1 or 2 beats.
+// Generate a 4-beat pattern.
+const PATTERNS = [
+  [0, BEAT_MS, BEAT_MS * 2, BEAT_MS * 3],                   // 4 steady beats
+  [0, BEAT_MS * 0.5, BEAT_MS * 1.5, BEAT_MS * 2.5],         // Quick start
+  [0, BEAT_MS, BEAT_MS * 1.5, BEAT_MS * 2.5],               // Syncopated
+  [0, BEAT_MS * 1.5, BEAT_MS * 2.5, BEAT_MS * 3],           // Delayed
+];
+
 function generatePattern() {
-  const gaps = [1, 1, 2, 1, 2, 2, 1, 2];
-  const pattern = [];
-  let t = 0;
-  for (let i = 0; i < 4; i++) {
-    pattern.push(t);
-    t += gaps[Math.floor(Math.random() * gaps.length)] * BEAT_MS;
-  }
-  return pattern; // ms offsets from start: e.g. [0, 750, 1500, 2250]
+  return PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
 }
 
 // Normalize a tapping sequence to start at 0
@@ -29,7 +29,7 @@ function normalize(arr) {
   return arr.map(t => t - base);
 }
 
-const TOLERANCE_MS = 260;
+const TOLERANCE_MS = 400;
 
 function matchesPattern(pattern, taps) {
   if (taps.length !== pattern.length) return false;
@@ -40,12 +40,11 @@ function matchesPattern(pattern, taps) {
 
 const PHASE = { INTRO: 'intro', PLAYBACK: 'playback', WAIT: 'wait', RECORDING: 'recording', RESULT: 'result' };
 
-export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
-  const [pattern] = useState(() => generatePattern());
+export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
+  const [pattern, setPattern] = useState(() => generatePattern());
   const [phase, setPhase] = useState(PHASE.INTRO);
-  const [lives, setLives] = useState(3);
   const [taps, setTaps] = useState([]);
-  const [result, setResult] = useState(null); // null | 'correct' | 'wrong'
+  const [result, setResult] = useState(null);
   const [beatHighlight, setBeatHighlight] = useState(false);
   const [tapHighlight, setTapHighlight] = useState(false);
   const [countdown, setCountdown] = useState(null);
@@ -107,7 +106,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
   // Auto-start after intro
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const intro = `Rhythm puzzle! Listen to the beat pattern carefully. Then reproduce it by tapping Space. You have 3 attempts. Press R to replay the pattern. Press Escape to skip.`;
+    const intro = `Rhythm puzzle! Listen to the beat pattern carefully. Then reproduce it by tapping Space. No attempt limits — keep trying! Press R to replay. Press Escape to skip.`;
     const utter = new SpeechSynthesisUtterance(intro);
     utter.rate = 0.9;
     window.speechSynthesis?.speak(utter);
@@ -128,43 +127,43 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
       window.speechSynthesis?.speak(utter);
       setTimeout(() => onSolve(), 1800);
     } else {
-      const newLives = lives - 1;
-      setLives(newLives);
       audioManager?.playWrong();
-      if (newLives <= 0) {
-        setResult('failed');
-        const utter = new SpeechSynthesisUtterance(`Wrong rhythm. No attempts left. Press Escape to skip or replay to try again.`);
-        window.speechSynthesis?.speak(utter);
-      } else {
-        setResult('wrong');
-        const utter = new SpeechSynthesisUtterance(`Wrong rhythm. ${newLives} ${newLives === 1 ? 'attempt' : 'attempts'} left. Listen again.`);
-        window.speechSynthesis?.speak(utter);
-        setTimeout(() => { setResult(null); startPlayback(); }, 2000);
-      }
+      setResult('wrong');
+      const utter = new SpeechSynthesisUtterance('Wrong rhythm. Listen again carefully.');
+      window.speechSynthesis?.speak(utter);
+      setTimeout(() => { setResult(null); startPlayback(); }, 2000);
     }
-  }, [pattern, lives, audioManager, onSolve, startPlayback]);
+  }, [pattern, audioManager, onSolve, startPlayback]);
 
   // Keyboard handler
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'Escape') { clearAll(); onSkip(); return; }
       if (e.key === 'r' || e.key === 'R') {
+        window.speechSynthesis?.cancel();
         const utter = new SpeechSynthesisUtterance('Replaying rhythm pattern.');
         window.speechSynthesis?.speak(utter);
         setTimeout(() => startPlayback(), 1000);
         return;
       }
-      if (e.code === 'Space' && phaseRef.current === PHASE.RECORDING) {
+      if (e.code === 'Space') {
         e.preventDefault();
-        const now = performance.now();
-        tapsRef.current = [...tapsRef.current, now];
-        setTaps([...tapsRef.current]);
-        audioManager?.playBeat(0.4);
-        setTapHighlight(true);
-        setTimeout(() => setTapHighlight(false), 120);
-        // Auto-submit after 4 taps or 2x last beat gap of silence
-        if (tapsRef.current.length >= pattern.length) {
-          setTimeout(() => submitTaps(), 400);
+        // If narrator is speaking, Space silences it (do NOT count as tap)
+        if (window.speechSynthesis.speaking) {
+          window.speechSynthesis.cancel();
+          return;
+        }
+        // Otherwise tap if in recording phase
+        if (phaseRef.current === PHASE.RECORDING) {
+          const now = performance.now();
+          tapsRef.current = [...tapsRef.current, now];
+          setTaps([...tapsRef.current]);
+          audioManager?.playBeat(0.4);
+          setTapHighlight(true);
+          setTimeout(() => setTapHighlight(false), 120);
+          if (tapsRef.current.length >= pattern.length) {
+            setTimeout(() => submitTaps(), 400);
+          }
         }
       }
     };
@@ -172,14 +171,12 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
     return () => window.removeEventListener('keydown', handler);
   }, [submitTaps, startPlayback, onSkip, audioManager, pattern.length]);
 
-  const hearts = Array.from({ length: 3 }, (_, i) => i < lives ? '❤️' : '🖤');
-
   const phaseLabel = {
     [PHASE.INTRO]:     'Get ready…',
     [PHASE.PLAYBACK]:  '🔊 Listen to the pattern',
     [PHASE.WAIT]:      countdown !== null ? `Get ready: ${countdown}` : 'Get ready…',
     [PHASE.RECORDING]: '🎯 Your turn — tap Space!',
-    [PHASE.RESULT]:    result === 'correct' ? '🎉 Correct!' : result === 'wrong' ? '❌ Try again…' : result === 'failed' ? '💀 Out of attempts' : '',
+    [PHASE.RESULT]:    result === 'correct' ? '🎉 Correct!' : '❌ Off rhythm — replaying…',
   }[phase] ?? '';
 
   return (
@@ -188,7 +185,6 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
         <div className="wordle-header">
           <h2>🥁 Rhythm Puzzle</h2>
           <p className="wordle-subtitle">Match the beat pattern by tapping Space</p>
-          <div className="lives-row">{hearts.join(' ')}</div>
         </div>
 
         <p className="rhythm-phase-label" aria-live="polite">{phaseLabel}</p>
@@ -238,14 +234,15 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip }) {
         </p>
 
         <div className="puzzle-shortcuts">
-          <span><kbd>Space</kbd> Tap</span>
-          <span><kbd>R</kbd> Replay pattern</span>
-          <span><kbd>Esc</kbd> Skip (move back)</span>
+          <span><kbd>Space</kbd> Tap / Silence narrator</span>
+          <span><kbd>R</kbd> Replay</span>
+          <span><kbd>Esc</kbd> Skip</span>
         </div>
 
-        <div className="wordle-footer">
-          <button className="skip-btn" onClick={() => { clearAll(); onSkip(); }}>
-            Skip puzzle (you'll be moved back)
+        <div className="wordle-footer puzzle-footer-row">
+          <button className="restart-btn" onClick={() => { clearAll(); onRestart(); }}>🔄 Restart</button>
+          <button className="skip-btn flex1" onClick={() => { clearAll(); onSkip(); }}>
+            Skip (move back)
           </button>
         </div>
       </div>
