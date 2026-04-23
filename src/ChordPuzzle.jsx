@@ -28,8 +28,6 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     replayLockRef.current = true;
     window.speechSynthesis?.cancel();
     audioManager?.playChord(target.freqs, 1.4);
-    const utter = new SpeechSynthesisUtterance('Target chord replayed.');
-    window.speechSynthesis?.speak(utter);
     setTimeout(() => {
       replayLockRef.current = false;
     }, 1500);

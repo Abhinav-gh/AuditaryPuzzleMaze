@@ -90,12 +90,14 @@ export default function App() {
   const levelRef    = useRef(null);
   const mousePosRef = useRef(null);          // last sampled mouse pos
   const mouseCurRef = useRef(null);          // current mouse pos (tracked live)
-
+  const screenRef   = useRef('splash');      // current screen for global handlers
+  
   const { speak } = useTTS();
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { posRef.current = pos; }, [pos]);
   useEffect(() => { levelRef.current = level; }, [level]);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
   useEffect(() => { audioRef.current = new AudioManager(); }, []);
 
   const addLog = useCallback((msg) => {
@@ -172,16 +174,29 @@ export default function App() {
     };
   }, [screen, phase]);
 
-  // ── Global Space = silence narrator (except in rhythm's recording) ─────────
+  // ── Global Space and I = silence narrator / repeat instructions ───────────
   useEffect(() => {
     const handler = (e) => {
-      if (e.code !== 'Space') return;
-      // Rhythm puzzle handles its own Space (tapping vs silencing) — don't intercept
-      if (phaseRef.current === 'rhythm') return;
-      // In wordle, chord, simon, playing — Space silences TTS
-      if (window.speechSynthesis.speaking) {
-        e.preventDefault();
-        window.speechSynthesis.cancel();
+      // Space: silence TTS everywhere except splash screen
+      if (e.code === 'Space') {
+        if (screenRef.current === 'splash') return;
+        if (phaseRef.current === 'rhythm') return; // Rhythm uses Space for tapping
+        if (window.speechSynthesis.speaking) {
+          e.preventDefault();
+          window.speechSynthesis.cancel();
+        }
+      }
+      
+      // I: Repeat instructions anywhere except splash and won screen
+      if (e.key === 'i' || e.key === 'I') {
+        if (phaseRef.current === 'simon') return; // Simon handles I contextually
+        if (screenRef.current !== 'splash' && screenRef.current !== 'won') {
+          // If in menu phase, we are likely in level select etc.
+          // The speakInstructions function will use phaseRef
+          window.speechSynthesis?.cancel();
+          const u = new SpeechSynthesisUtterance(buildInstructions(phaseRef.current, levelRef.current?.id ?? 1));
+          window.speechSynthesis?.speak(u);
+        }
       }
     };
     window.addEventListener('keydown', handler);
@@ -220,6 +235,7 @@ export default function App() {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && !e.repeat) {
         escTimer.current = setTimeout(() => {
+          window.speechSynthesis?.cancel();
           resetToMenu();
           speak("Returned to main menu.", { priority: true });
         }, 1000);
@@ -248,8 +264,6 @@ export default function App() {
     if (phase !== 'playing') return;
 
     const handleKey = (e) => {
-      if (e.key === 'i' || e.key === 'I') { speakInstructions(); return; }
-
       if (e.key === 'p' || e.key === 'P') {
         const lv = levelRef.current; const cur = posRef.current;
         if (!lv) return;
@@ -336,13 +350,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [phase, moves, solvedPuzzles, speak, addLog, checkDanger, updateAmbient, speakInstructions]);
 
-  // I key in puzzle overlays
-  useEffect(() => {
-    if (!PUZZLE_PHASES.includes(phase)) return;
-    const h = (e) => { if (e.key === 'i' || e.key === 'I') speakInstructions(); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [phase, speakInstructions]);
+  // We removed local I listener, relies on global listener
 
   // ── Puzzle callbacks ───────────────────────────────────────────────────────
   const handlePuzzleSolve = useCallback(() => {
@@ -585,6 +593,8 @@ function WinScreen({ lv, moves, resetToMenu, startLevel, audioRef, setScreen, se
       if (e.key === 'l' || e.key === 'L') {
         window.speechSynthesis?.cancel(); try{audioRef.current?.stopAll()}catch{} 
         audioRef.current=new AudioManager(); setScreen('level-select'); setPhase('menu');
+        const u = new SpeechSynthesisUtterance(buildInstructions('level-select', 1));
+        window.speechSynthesis?.speak(u);
       }
     };
     window.addEventListener('keydown', h);
@@ -605,7 +615,7 @@ function WinScreen({ lv, moves, resetToMenu, startLevel, audioRef, setScreen, se
           🔄 Play Again
         </button>
         <button className="start-btn level2" id="level-select-btn"
-          onClick={() => { window.speechSynthesis?.cancel(); try{audioRef.current?.stopAll()}catch{} audioRef.current=new AudioManager(); setScreen('level-select'); setPhase('menu'); }}>
+          onClick={() => { window.speechSynthesis?.cancel(); try{audioRef.current?.stopAll()}catch{} audioRef.current=new AudioManager(); setScreen('level-select'); setPhase('menu'); const u = new SpeechSynthesisUtterance(buildInstructions('level-select', 1)); window.speechSynthesis?.speak(u); }}>
           📋 Level Select
         </button>
         <button className="quit-btn mt" id="menu-btn" onClick={resetToMenu}>
