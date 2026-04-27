@@ -296,6 +296,7 @@ export function SimonPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
             ? <><span><kbd>↑↓←→</kbd> Explore notes</span><span><kbd>Enter</kbd> Start puzzle</span></>
             : <><span><kbd>↑↓←→</kbd> Input (on release)</span><span><kbd>R</kbd> Replay</span></>
           }
+          <span><kbd>I</kbd> Instructions</span>
           <span><kbd>Space</kbd> Silence narrator</span>
           <span><kbd>Esc</kbd> Skip</span>
         </div>

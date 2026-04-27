@@ -18,10 +18,21 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
   const [lastAttempt, setLastAttempt] = useState(null); // Set of keys from last attempt
   const heldRef      = useRef(new Set());
   const checkTimerRef = useRef(null);
+  const sustainTimerRef = useRef(null);
   const statusRef    = useRef('playing');
   const replayLockRef = useRef(false);
+  const sustainAfterSolveRef = useRef(false);
 
   useEffect(() => { statusRef.current = status; }, [status]);
+
+  const clearSustainTimer = useCallback(() => {
+    clearTimeout(sustainTimerRef.current);
+    sustainTimerRef.current = null;
+  }, []);
+
+  const stopHeldNotes = useCallback(() => {
+    audioManager?.stopAllNotes();
+  }, [audioManager]);
 
   const replayTarget = useCallback(() => {
     if (replayLockRef.current) return;
@@ -33,14 +44,34 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     }, 1500);
   }, [target, audioManager]);
 
+  // useEffect(() => {
+  //   audioManager?.playPuzzleFound();
+  //   const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys — C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits — keep trying! Press R to replay. Press Escape to skip.`;
+  //   const utter = new SpeechSynthesisUtterance(intro);
+  //   utter.rate = 0.9;
+  //   window.speechSynthesis?.speak(utter);
+  //   setTimeout(() => audioManager?.playChord(target.freqs, 1.5), 20000);
+  // }, []);
   useEffect(() => {
-    audioManager?.playPuzzleFound();
-    const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys — C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits — keep trying! Press R to replay. Press Escape to skip.`;
-    const utter = new SpeechSynthesisUtterance(intro);
-    utter.rate = 0.9;
-    window.speechSynthesis?.speak(utter);
-    setTimeout(() => audioManager?.playChord(target.freqs, 1.5), 4500);
-  }, []);
+  audioManager?.playPuzzleFound();
+
+  window.speechSynthesis?.cancel(); // IMPORTANT: clear any previous speech
+
+  const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys — C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits — keep trying! Press R to replay. Press Escape to skip.`;
+
+  const utter = new SpeechSynthesisUtterance(intro);
+  utter.rate = 0.9;
+
+  utter.onend = () => {
+    audioManager?.playChord(target.freqs, 1.5);
+  };
+
+  utter.onerror = () => {
+    audioManager?.playChord(target.freqs, 1.5);
+  };
+
+  window.speechSynthesis?.speak(utter);
+}, []);
 
   const checkChord = useCallback(() => {
     if (statusRef.current !== 'playing') return;
@@ -52,10 +83,15 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     if (setsEqual(held, target.keys)) {
       setStatus('correct');
       audioManager?.playCorrect();
-      audioManager?.stopAllNotes();
+      sustainAfterSolveRef.current = true;
+      clearSustainTimer();
       const utter = new SpeechSynthesisUtterance(`Correct! That's ${target.name}! Puzzle solved!`);
       window.speechSynthesis?.speak(utter);
-      setTimeout(() => onSolve(), 1800);
+      sustainTimerRef.current = setTimeout(() => {
+        stopHeldNotes();
+        sustainAfterSolveRef.current = false;
+        onSolve();
+      }, 2200);
     } else {
       setStatus('wrong');
       audioManager?.playWrong();
@@ -98,7 +134,9 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       if (!PIANO_KEYS[key]) return;
       heldRef.current.delete(key);
       setHeldKeys(new Set(heldRef.current));
-      audioManager?.playNoteStop(key);
+      if (statusRef.current !== 'correct' && !sustainAfterSolveRef.current) {
+        audioManager?.playNoteStop(key);
+      }
       clearTimeout(checkTimerRef.current);
     };
 
@@ -108,9 +146,10 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       clearTimeout(checkTimerRef.current);
+      clearSustainTimer();
       audioManager?.stopAllNotes();
     };
-  }, [checkChord, replayTarget, onSkip, audioManager]);
+  }, [checkChord, replayTarget, onSkip, audioManager, clearSustainTimer]);
 
   return (
     <div className="wordle-overlay" role="dialog" aria-modal="true" aria-label="Chord Puzzle">
@@ -161,14 +200,18 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
                 onMouseUp={() => {
                   heldRef.current.delete(key);
                   setHeldKeys(new Set(heldRef.current));
-                  audioManager?.playNoteStop(key);
+                  if (statusRef.current !== 'correct' && !sustainAfterSolveRef.current) {
+                    audioManager?.playNoteStop(key);
+                  }
                   clearTimeout(checkTimerRef.current);
                 }}
                 onMouseLeave={() => {
                   if (heldRef.current.has(key)) {
                     heldRef.current.delete(key);
                     setHeldKeys(new Set(heldRef.current));
-                    audioManager?.playNoteStop(key);
+                    if (statusRef.current !== 'correct' && !sustainAfterSolveRef.current) {
+                      audioManager?.playNoteStop(key);
+                    }
                     clearTimeout(checkTimerRef.current);
                   }
                 }}
@@ -188,6 +231,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
         <div className="puzzle-shortcuts">
           <span><kbd>A–K</kbd> Piano keys</span>
           <span><kbd>R</kbd> Replay</span>
+          <span><kbd>I</kbd> Instructions</span>
           <span><kbd>Space</kbd> Silence narrator</span>
           <span><kbd>Esc</kbd> Skip</span>
         </div>
