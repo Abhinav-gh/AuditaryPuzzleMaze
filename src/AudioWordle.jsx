@@ -48,7 +48,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
   // Auto-speak on mount
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const msg = `Word puzzle unlocked! Guess the three-letter word using the phonetic clue. Press R at any time to hear the clue again. Press Escape to skip.`;
+    const msg = `Word puzzle unlocked! Guess the three-letter word using the phonetic clue. Press R at any time to hear the clue again. Press I to repeat these instructions. Press Escape to skip.`;
     const utter = new SpeechSynthesisUtterance(msg);
     utter.rate = 0.9;
     window.speechSynthesis?.speak(utter);
@@ -202,6 +202,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
         <div className="puzzle-shortcuts">
           <span><kbd>Enter</kbd> Submit</span>
           <span><kbd>R</kbd> Replay clue</span>
+          <span><kbd>I</kbd> Instructions</span>
           <span><kbd>Space</kbd> Silence narrator</span>
           <span><kbd>Esc</kbd> Skip</span>
         </div>

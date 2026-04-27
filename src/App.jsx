@@ -42,17 +42,17 @@ function panOf(dir) { return dir === 'east' ? 0.8 : dir === 'west' ? -0.8 : 0; }
 // Context-aware instructions
 function buildInstructions(phase, levelId) {
   if (phase === 'level-select')
-    return `Level select screen. Press 1 for ${LEVELS[0].name} — ${LEVELS[0].description}. Press 2 for ${LEVELS[1].name} — ${LEVELS[1].description}. Press I to hear this again.`;
+    return `Level select screen. Press 1 for ${LEVELS[0].name} — ${LEVELS[0].description}. Press 2 for ${LEVELS[1].name} — ${LEVELS[1].description}. Press I to hear this again. Hold Escape to go back.`;
   if (phase === 'playing')
     return `You're playing ${LEVELS[levelId - 1]?.name ?? 'the maze'}. Use Arrow keys or W A S D to move. Press P for a directional audio ping to the exit. Move your mouse in any direction to hear a sound preview of what's there. Press I to repeat instructions. Press Space to silence the narrator. Puzzle cells start a mini game — press Escape to skip and be moved back. Danger cells growl when adjacent!`;
   if (phase === 'wordle')
-    return `Word puzzle. Listen to the phonetic clue, type a 3-letter word, press Enter. Press R to replay. Press Space to silence narrator. Escape to skip.`;
+    return `Word puzzle. Listen to the phonetic clue, type a 3-letter word, press Enter. Press R to replay the clue, press I to repeat these instructions, press Space to silence narrator, and Escape to skip.`;
   if (phase === 'chord')
-    return `Chord puzzle. Keys A through K are piano notes C D E F G A B C. Hold 3 keys simultaneously to play a chord. Match the target chord. No attempt limit! Press R to replay, Space to silence narrator, Escape to skip.`;
+    return `Chord puzzle. Keys A through K are piano notes C D E F G A B C. Hold 3 keys simultaneously to play a chord. Match the target chord. No attempt limit! Press R to replay the target chord, press I to repeat these instructions, press Space to silence narrator, and Escape to skip.`;
   if (phase === 'rhythm')
-    return `Rhythm puzzle. Listen to the beat pattern. When it's your turn, tap Space to reproduce the rhythm — but if narrator is speaking, Space silences them first. Press R to replay. Escape to skip.`;
+    return `Rhythm puzzle. Listen to the beat pattern first, then wait for the turn prompt before tapping Space to reproduce it. Press R to replay the pattern, press I to repeat these instructions, press Space to silence narrator, and Escape to skip.`;
   if (phase === 'simon')
-    return `Simon Says puzzle. First explore arrow keys to learn their sounds. Then press Space to start. Repeat the note sequence using your arrow keys — answers register when you release the key. Press R to replay. Escape to skip.`;
+    return `Simon Says puzzle. First explore arrow keys to learn their sounds. Then press Space to start. Repeat the note sequence using your arrow keys — answers register when you release the key. Press R to replay the sequence, press I to repeat these instructions, and Escape to skip.`;
   return `Puzzle Maze. Select a level to begin.`;
 }
 
@@ -440,6 +440,59 @@ export default function App() {
     );
   }
 
+  // useEffect(() => {
+  //   if (screen === 'splash') {
+  //     window.speechSynthesis?.cancel();
+
+  //     const utter = new SpeechSynthesisUtterance(
+  //       'Welcome to Puzzle Maze. Press Enter to choose a level.'
+  //     );
+  //     utter.rate = 0.9;
+
+  //     window.speechSynthesis?.speak(utter);
+  //   }
+  // }, [screen]);
+  useEffect(() => {
+  if (screen !== 'splash') return;
+
+  const speakIntro = () => {
+    const synth = window.speechSynthesis;
+
+    synth.cancel();
+
+    const utter = new SpeechSynthesisUtterance(
+      'Welcome to Puzzle Maze. Press Enter to choose a level.'
+    );
+    utter.rate = 0.9;
+
+    synth.speak(utter);
+
+    // remove after first interaction (important)
+    window.removeEventListener('keydown', speakIntro);
+    window.removeEventListener('click', speakIntro);
+  };
+
+  window.addEventListener('keydown', speakIntro);
+  window.addEventListener('click', speakIntro);
+
+  return () => {
+    window.removeEventListener('keydown', speakIntro);
+    window.removeEventListener('click', speakIntro);
+  };
+}, [screen]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (screen === 'splash' && e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('choose-level-btn')?.click();
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [screen]);
+
   const puzzleProps = { audioManager: audioRef.current, onSolve: handlePuzzleSolve, onSkip: handlePuzzleSkip, onRestart: handlePuzzleRestart };
 
   return (
@@ -495,7 +548,8 @@ export default function App() {
               ))}
             </div>
             <button className="quit-btn" onClick={() => setScreen('splash')}>↩ Back</button>
-            <p className="splash-tip small">Press <kbd>1</kbd> or <kbd>2</kbd> to select · <kbd>I</kbd> for instructions</p>
+            {/* <p className="splash-tip small">Press <kbd>1</kbd> or <kbd>2</kbd> to select · <kbd>I</kbd> for instructions</p> */}
+            <p className="splash-tip small">Press <kbd>1</kbd> or <kbd>2</kbd> to select · <kbd>I</kbd> for instructions · Hold <kbd>Esc</kbd> to go back</p>
             <LevelSelectKeys onSelect={(lv) => { audioRef.current = new AudioManager(); startLevel(lv); }} />
           </div>
         )}

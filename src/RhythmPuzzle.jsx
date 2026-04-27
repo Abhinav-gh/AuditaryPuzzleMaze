@@ -1,9 +1,9 @@
 // RhythmPuzzle.jsx
 // Beat matching puzzle:
 //  1. A random rhythm pattern of 4 beats plays (varying gaps = short/long)
-//  2. Player sees a "Your Turn" prompt and taps SPACE to reproduce the rhythm
+//  2. Player hears the pattern, then gets a separate turn prompt before recording
 //  3. If all 4 taps match within ±250ms tolerance → solved!
-//  4. 3 lives total. R = replay. Escape = skip + revert.
+//  4. No lives. R = replay pattern. I = repeat instructions. Escape = skip + revert.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
@@ -52,9 +52,44 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
   const tapsRef = useRef([]);
   const phaseRef = useRef(PHASE.INTRO);
   const timersRef = useRef([]);
+  const narrationTokenRef = useRef(0);
 
   const clearAll = () => timersRef.current.forEach(clearTimeout);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+  const cancelNarration = useCallback(() => {
+    narrationTokenRef.current += 1;
+    window.speechSynthesis?.cancel();
+  }, []);
+
+  const speakAndThen = useCallback((text, onEnd) => {
+    const token = ++narrationTokenRef.current;
+    const synth = window.speechSynthesis;
+    if (!synth) {
+      onEnd?.();
+      return;
+    }
+
+    synth.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 0.9;
+    utter.onend = () => {
+      if (narrationTokenRef.current === token) onEnd?.();
+    };
+    utter.onerror = utter.onend;
+    synth.speak(utter);
+  }, []);
+
+  const resetRound = useCallback(() => {
+    clearAll();
+    cancelNarration();
+    setCountdown(null);
+    setBeatHighlight(false);
+    setTapHighlight(false);
+    setResult(null);
+    tapsRef.current = [];
+    setTaps([]);
+  }, [cancelNarration]);
 
   const startPlayback = useCallback(() => {
     clearAll(); timersRef.current = [];
@@ -62,6 +97,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     phaseRef.current = PHASE.PLAYBACK;
     tapsRef.current = [];
     setTaps([]);
+    setCountdown(null);
 
     // Play each beat
     pattern.forEach((offset, i) => {
@@ -77,43 +113,41 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     const totalDuration = pattern[pattern.length - 1] + 800;
     const waitId = setTimeout(() => {
       setPhase(PHASE.WAIT);
-      // Countdown 3,2,1...
-      let c = 3;
-      setCountdown(c);
+      const countValues = [3, 2, 1];
+      let index = 0;
+      setCountdown(countValues[index]);
       const cdInterval = setInterval(() => {
-        c--;
-        if (c <= 0) {
+        index += 1;
+        if (index >= countValues.length) {
           clearInterval(cdInterval);
           setCountdown(null);
           setPhase(PHASE.RECORDING);
           phaseRef.current = PHASE.RECORDING;
           tapsRef.current = [];
           setTaps([]);
-          // Speak
-          const utter = new SpeechSynthesisUtterance('Your turn! Tap Space to match the rhythm.');
-          utter.rate = 1.0;
-          window.speechSynthesis?.speak(utter);
+          speakAndThen('Your turn! Tap Space to match the rhythm. Press I to repeat instructions.');
         } else {
-          setCountdown(c);
-          audioManager?.playMetronomeTick(false);
+          setCountdown(countValues[index]);
         }
       }, 700);
       timersRef.current.push(cdInterval);
     }, totalDuration);
     timersRef.current.push(waitId);
-  }, [pattern, audioManager]);
+  }, [pattern, audioManager, speakAndThen]);
 
-  // Auto-start after intro
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const intro = `Rhythm puzzle! Listen to the beat pattern carefully. Then reproduce it by tapping Space. No attempt limits — keep trying! Press R to replay. Press Escape to skip.`;
-    const utter = new SpeechSynthesisUtterance(intro);
-    utter.rate = 0.9;
-    window.speechSynthesis?.speak(utter);
-    const id = setTimeout(() => startPlayback(), 3500);
-    timersRef.current.push(id);
-    return () => { clearAll(); };
-  }, []);
+    const intro = `Rhythm puzzle! First listen to the beat pattern. Then wait for the turn prompt before tapping Space. No attempt limits — keep trying. Press R to replay the pattern. Press I to repeat instructions. Press Escape to skip.`;
+    speakAndThen(intro, () => {
+      const id = setTimeout(() => startPlayback(), 250);
+      timersRef.current.push(id);
+    });
+
+    return () => {
+      clearAll();
+      cancelNarration();
+    };
+  }, [audioManager, startPlayback, speakAndThen, cancelNarration]);
 
   const submitTaps = useCallback(() => {
     const recorded = tapsRef.current;
@@ -140,10 +174,11 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     const handler = (e) => {
       if (e.key === 'Escape') { clearAll(); onSkip(); return; }
       if (e.key === 'r' || e.key === 'R') {
-        window.speechSynthesis?.cancel();
-        const utter = new SpeechSynthesisUtterance('Replaying rhythm pattern.');
-        window.speechSynthesis?.speak(utter);
-        setTimeout(() => startPlayback(), 1000);
+        resetRound();
+        speakAndThen('Replaying rhythm pattern. Listen carefully.', () => {
+          const id = setTimeout(() => startPlayback(), 250);
+          timersRef.current.push(id);
+        });
         return;
       }
       if (e.code === 'Space') {
@@ -169,7 +204,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [submitTaps, startPlayback, onSkip, audioManager, pattern.length]);
+  }, [submitTaps, startPlayback, onSkip, audioManager, pattern.length, resetRound, speakAndThen]);
 
   const phaseLabel = {
     [PHASE.INTRO]:     'Get ready…',
@@ -236,6 +271,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
         <div className="puzzle-shortcuts">
           <span><kbd>Space</kbd> Tap / Silence narrator</span>
           <span><kbd>R</kbd> Replay</span>
+          <span><kbd>I</kbd> Instructions</span>
           <span><kbd>Esc</kbd> Skip</span>
         </div>
 
