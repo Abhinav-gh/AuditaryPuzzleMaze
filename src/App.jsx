@@ -295,9 +295,9 @@ export default function App() {
         const ed = exitDir(cur.x, cur.y, lv.exit);
         const d = dist(cur.x, cur.y, lv.exit.x, lv.exit.y);
         audioRef.current.playPing(ed, d);
-        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away). Pos: row ${cur.y + 1}, col ${cur.x + 1}`);
+        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away). Pos: row ${cur.y}, col ${cur.x}`);
         speak(
-          `Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells. You are at row ${cur.y + 1} and column ${cur.x + 1}.`,
+          `You are at row ${cur.y} and column ${cur.x}. Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells.`,
         );
         return;
       }
