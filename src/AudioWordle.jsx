@@ -1,7 +1,9 @@
-// AudioWordle.jsx v3
+// AudioWordle.jsx v4
 // Accessibility improvements:
 //  - Escape = skip (shown in UI)
-//  - R = replay audio clue (shown in UI)
+//  - 1 = replay audio clue (shown in UI)
+//  - 2 = instructions (shown in UI)
+//  - Number keys used instead of letters to avoid conflicts with guesses
 //  - All shortcuts listed in a visible shortcuts bar
 //  - ARIA roles for screen reader support
 
@@ -43,7 +45,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
   // Auto-speak on mount
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const msg = `Word puzzle unlocked! Guess the three-letter word using the audio clue. You have four attempts. Press R at any time to hear the clue again. Press I to repeat these instructions. Press Escape to skip.`;
+    const msg = `Word puzzle unlocked! Guess the three-letter word using the audio clue. You have four attempts. Press 1 at any time to hear the clue again. Press 2 to repeat these instructions. Press Escape to skip.`;
     const utter = new SpeechSynthesisUtterance(msg);
     utter.rate = 0.9;
     window.speechSynthesis?.speak(utter);
@@ -64,14 +66,19 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
       const utter = new SpeechSynthesisUtterance(
         `Correct! The word was ${target.word}. Puzzle solved! Path unlocked.`,
       );
+      utter.rate = 0.85;
+      // Wait for narrator to finish before closing puzzle
+      utter.onend = () => {
+        onSolve();
+      };
       window.speechSynthesis?.speak(utter);
-      setTimeout(() => onSolve(), 1800);
     } else if (newGuesses.length >= MAX_GUESSES) {
       setFailed(true);
       audioManager?.playWrong();
       const utter = new SpeechSynthesisUtterance(
         `Out of guesses. The word was ${target.word}. You may skip or the path remains locked.`,
       );
+      utter.rate = 0.85;
       window.speechSynthesis?.speak(utter);
     } else {
       audioManager?.playWrong();
@@ -103,8 +110,15 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
         onSkip();
         return;
       }
-      if (e.key === "r" || e.key === "R") {
+      if (e.key === "1") {
         speakClue();
+        return;
+      }
+      if (e.key === "2") {
+        const msg = `Press 1 to hear the clue. Press 2 for instructions. Type a 3-letter word and press Enter to submit. Press Escape to skip.`;
+        const utter = new SpeechSynthesisUtterance(msg);
+        utter.rate = 0.9;
+        window.speechSynthesis?.speak(utter);
         return;
       }
       if (e.code === "Space") {
@@ -167,7 +181,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
             onClick={speakClue}
             aria-label="Replay audio clue"
           >
-            🔊 Replay Audio Clue <span className="key-hint">R</span>
+            🔊 Replay Audio Clue <span className="key-hint">1</span>
           </button>
         </div>
 
@@ -253,10 +267,10 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
             <kbd>Enter</kbd> Submit
           </span>
           <span>
-            <kbd>R</kbd> Replay clue
+            <kbd>1</kbd> Replay clue
           </span>
           <span>
-            <kbd>I</kbd> Instructions
+            <kbd>2</kbd> Instructions
           </span>
           <span>
             <kbd>Space</kbd> Silence narrator

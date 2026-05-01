@@ -164,7 +164,7 @@ export default function App() {
         );
         const dirs = dangers.map((d) => d.dir).join(" and ");
         addLog(`⚠️ Danger growling to the ${dirs}!`);
-        speak(`Warning! Danger to the ${dirs}. Stay alert!`, {
+        speak(`Warning. Danger to the ${dirs}. Stay alert.`, {
           priority: true,
         });
         return dangers;
@@ -386,7 +386,7 @@ export default function App() {
       if (ct === CELL.DANGER) {
         audioRef.current.playDangerHit();
         addLog(`💀 Stepped on DANGER — pushed back!`);
-        speak(`You stepped on a creature — pushed back!`, { priority: true });
+        speak(`You stepped on a creature and were pushed back.`, { priority: true });
         return;
       }
 
@@ -404,7 +404,7 @@ export default function App() {
         setScreen("won");
         addLog(`🏆 EXIT REACHED!`);
         speak(
-          `Congratulations! You escaped the maze in ${moves + 1} moves! Press Enter to play again, L for level select, or hold Escape for the main menu.`,
+          `Congratulations. You escaped the maze in ${moves + 1} moves. Press Enter to play again, L for level select, or hold Escape for the main menu.`,
           { priority: true },
         );
         return;
@@ -425,7 +425,8 @@ export default function App() {
           [CELL.SIMON]: "Simon Says",
         }[ct];
         addLog(`🔐 ${kindLabel} Puzzle at (${nx},${ny})`);
-        speak(`${kindLabel} puzzle found! Press I for instructions.`, {
+        const instructionKey = ct === CELL.WORDLE ? "2" : "I";
+        speak(`${kindLabel} puzzle found. Press ${instructionKey} for instructions.`, {
           priority: true,
         });
         setPhase(phaseName);
@@ -474,7 +475,7 @@ export default function App() {
     setNearDanger(dangers);
     updateAmbient(lv, x, y, dangers);
     addLog("✅ Puzzle solved — path unlocked!");
-    speak("Excellent! Puzzle solved. Keep going!", { priority: true });
+    speak("Excellent. Puzzle solved. Keep going.", { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   const handlePuzzleSkip = useCallback(() => {

@@ -162,8 +162,12 @@ export function SimonPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
         const utter = new SpeechSynthesisUtterance(
           "Excellent! Sequence complete. Puzzle solved!",
         );
+        utter.rate = 0.85;
+        // Wait for narrator to finish before closing puzzle
+        utter.onend = () => {
+          onSolve();
+        };
         window.speechSynthesis?.speak(utter);
-        setTimeout(() => onSolve(), 1800);
       }
     },
     [audioManager, onSolve, playSequence],

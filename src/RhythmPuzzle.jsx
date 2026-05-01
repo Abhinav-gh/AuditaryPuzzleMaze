@@ -146,7 +146,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
 
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const intro = `Rhythm puzzle! First listen to the beat pattern. Then wait for the turn prompt before tapping Space. No attempt limits — keep trying. Press R to replay the pattern. Press I to repeat instructions. Press Escape to skip.`;
+    const intro = `Rhythm puzzle! First listen to the beat pattern. Then wait for the turn prompt before tapping Space. No attempt limits, keep trying. Press R to replay the pattern. Press I to repeat instructions. Press Escape to skip.`;
     speakAndThen(intro, () => {
       const id = setTimeout(() => startPlayback(), 250);
       timersRef.current.push(id);
@@ -169,8 +169,12 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       const utter = new SpeechSynthesisUtterance(
         "Spot on! Rhythm matched. Puzzle solved!",
       );
+      utter.rate = 0.85;
+      // Wait for narrator to finish before closing puzzle
+      utter.onend = () => {
+        onSolve();
+      };
       window.speechSynthesis?.speak(utter);
-      setTimeout(() => onSolve(), 1800);
     } else {
       audioManager?.playWrong();
       setResult("wrong");
