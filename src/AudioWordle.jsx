@@ -107,6 +107,10 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
   useEffect(() => {
     const handler = (e) => {
       if (e.key === "Escape") {
+        if (solved) {
+          onSolve();
+          return;
+        }
         onSkip();
         return;
       }

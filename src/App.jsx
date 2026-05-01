@@ -164,9 +164,6 @@ export default function App() {
         );
         const dirs = dangers.map((d) => d.dir).join(" and ");
         addLog(`⚠️ Danger growling to the ${dirs}!`);
-        speak(`Warning. Danger to the ${dirs}. Stay alert.`, {
-          priority: true,
-        });
         return dangers;
       }
       return [];
@@ -227,7 +224,14 @@ export default function App() {
     const dangers = checkDanger(lv, lv.start.x, lv.start.y);
     updateAmbient(lv, lv.start.x, lv.start.y, dangers);
     addLog(`${lv.name} started!`);
-    speak(buildInstructions("playing", lv.id), { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+    }
+    msg += buildInstructions("playing", lv.id);
+    speak(msg, { priority: true });
   };
 
   const resetToMenu = useCallback(() => {
@@ -291,9 +295,9 @@ export default function App() {
         const ed = exitDir(cur.x, cur.y, lv.exit);
         const d = dist(cur.x, cur.y, lv.exit.x, lv.exit.y);
         audioRef.current.playPing(ed, d);
-        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away)`);
+        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away). Pos: row ${cur.y + 1}, col ${cur.x + 1}`);
         speak(
-          `Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells.`,
+          `Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells. You are at row ${cur.y + 1} and column ${cur.x + 1}.`,
         );
         return;
       }
@@ -325,11 +329,38 @@ export default function App() {
       }
 
       if (ct === CELL.DANGER) {
-        audioRef.current.playDangerHit();
-        addLog(`💀 Stepped on DANGER — pushed back!`);
-        speak(`You stepped on a creature and were pushed back.`, {
-          priority: true,
+        setPhase("dead");
+        phaseRef.current = "dead";
+        addLog(`💀 WASTED!`);
+        
+        window.speechSynthesis?.cancel();
+        audioRef.current.stopAmbient();
+        
+        audioRef.current.playWasted(2.0).then(() => {
+          speak(`Wasted.`, { priority: true });
+          
+          setTimeout(() => {
+            setPos(lv.start);
+            posRef.current = lv.start;
+            prevPosRef.current = lv.start;
+            setVisitedCells(new Set([`${lv.start.x},${lv.start.y}`]));
+            
+            const dangers = checkDanger(lv, lv.start.x, lv.start.y);
+            updateAmbient(lv, lv.start.x, lv.start.y, dangers);
+            
+            let msg = "";
+            if (dangers.length > 0) {
+              const dirs = dangers.map((d) => d.dir).join(" and ");
+              msg += `Warning. Danger to the ${dirs}. `;
+            }
+            msg += `You died and were teleported back to the beginning of the puzzle.`;
+            speak(msg, { priority: true });
+            
+            setPhase("playing");
+            phaseRef.current = "playing";
+          }, 1500);
         });
+
         return;
       }
 
@@ -391,7 +422,14 @@ export default function App() {
       updateAmbient(lv, nx, ny, dangers);
       const openD = getOpenDirections(lv, nx, ny).join(", ") || "none";
       addLog(`👣 Moved ${dir.label} → (${nx},${ny})`);
-      speak(`Moved ${dir.label}. Open: ${openD}.`, { priority: true });
+      
+      let msg = "";
+      if (dangers.length > 0) {
+        const dirs = dangers.map((d) => d.dir).join(" and ");
+        msg += `Warning. Danger to the ${dirs}. Stay alert. `;
+      }
+      msg += `Moved ${dir.label}. Open: ${openD}.`;
+      speak(msg, { priority: true });
     };
 
     window.addEventListener("keydown", handleKey);
@@ -421,7 +459,15 @@ export default function App() {
     setNearDanger(dangers);
     updateAmbient(lv, x, y, dangers);
     addLog("✅ Puzzle solved — path unlocked!");
-    speak("Excellent. Puzzle solved. Keep going.", { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+      dangers.forEach(({ dir }) => audioRef.current.playDangerGrowl(panOf(dir), 0.45));
+    }
+    msg += "Excellent. Puzzle solved. Keep going.";
+    speak(msg, { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   const handlePuzzleSkip = useCallback(() => {
@@ -435,7 +481,15 @@ export default function App() {
     setNearDanger(dangers);
     updateAmbient(lv, prev.x, prev.y, dangers);
     addLog(`⏭️ Skipped — back to (${prev.x},${prev.y})`);
-    speak("Puzzle skipped. Moved back.", { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+      dangers.forEach(({ dir }) => audioRef.current.playDangerGrowl(panOf(dir), 0.45));
+    }
+    msg += "Puzzle skipped. Moved back.";
+    speak(msg, { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   // Restart: remount puzzle without moving player

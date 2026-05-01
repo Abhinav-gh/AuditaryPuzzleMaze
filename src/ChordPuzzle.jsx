@@ -120,6 +120,10 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       }
       if (e.key === "Escape") {
         audioManager?.stopAllNotes();
+        if (statusRef.current === "correct") {
+          onSolve();
+          return;
+        }
         onSkip();
         return;
       }

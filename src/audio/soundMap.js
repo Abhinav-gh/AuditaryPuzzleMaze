@@ -21,5 +21,7 @@ export const SOUND_MAP = {
   victory: { file: '/sounds/Game_over.mp3', description: 'Player reaches the exit — win jingle' },
   dangerGrowl: { file: null, description: 'Danger creature nearby — proximity warning growl' },
   dangerHit: { file: '/sounds/Screaming_beaver.mp3', description: 'Player steps ON a danger cell — pushed back' },
+  wasted: { file: ['/sounds/GTA_Wasted.mp3'], description: 'Played when player dies on a danger cell' },
   ping: { file: null, description: 'On-demand directional ping toward exit (press P)' },
 };
+

@@ -52,8 +52,8 @@ const MAZE_L2 = [
 export const LEVELS = [
   {
     id: 1,
-    name: 'Level 1 – The Forest Path',
-    description: 'A simple 3×3 maze to warm up your ears. One optional puzzle.',
+    name: 'Level 1, The Forest Path.',
+    description: 'A simple 3 by 3 maze to warm up your ears. One optional puzzle.',
     maze: MAZE_L1,
     rows: 3,
     cols: 3,
@@ -62,8 +62,8 @@ export const LEVELS = [
   },
   {
     id: 2,
-    name: 'Level 2 – The Ancient Ruins',
-    description: 'A complex 5×5 maze. Word, Chord, Rhythm, and Simon puzzles await. Danger lurks.',
+    name: 'Level 2, The Ancient Ruins.',
+    description: 'A complex 5 by 5 maze. Word, Chord, Rhythm, and Simon puzzles await. Danger lurks.',
     maze: MAZE_L2,
     rows: 5,
     cols: 5,

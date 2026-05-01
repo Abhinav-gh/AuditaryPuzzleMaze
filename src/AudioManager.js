@@ -110,39 +110,59 @@ export class AudioManager {
   }
 
   _play(name, synthFn, vol = 1, playBoth = false) {
-    if (!this.isReady) {
-      console.warn(`[AudioManager] _play called before ready: ${name}`);
-      return;
-    }
+    return new Promise((resolve) => {
+      if (!this.isReady) {
+        console.warn(`[AudioManager] _play called before ready: ${name}`);
+        return resolve();
+      }
 
-    if (this.soundBuffers[name] && this.soundBuffers[name].length > 0) {
-      try {
-        const buffers = this.soundBuffers[name];
-        const buffer = buffers[Math.floor(Math.random() * buffers.length)];
-        const src = this.ctx.createBufferSource();
-        src.buffer = buffer;
-        const g = this.ctx.createGain();
-        g.gain.value = vol;
-        src.connect(g); g.connect(this.ctx.destination);
-        src.start();
-        console.debug(`[AudioManager] Playing buffer sound: ${name} (duration=${buffer.duration.toFixed(2)}s)`);
-      } catch (err) {
-        this._preloadErrors[name] = err;
-        console.error(`[AudioManager] Error while starting buffer source for "${name}":`, err);
-        // fall through to synth fallback if provided
-        if (!synthFn) return;
+      let playedBuffer = false;
+      if (this.soundBuffers[name] && this.soundBuffers[name].length > 0) {
+        try {
+          const buffers = this.soundBuffers[name];
+          const buffer = buffers[Math.floor(Math.random() * buffers.length)];
+          const src = this.ctx.createBufferSource();
+          src.buffer = buffer;
+          const g = this.ctx.createGain();
+          g.gain.value = vol;
+          src.connect(g); g.connect(this.ctx.destination);
+          src.onended = resolve;
+          src.start();
+          playedBuffer = true;
+          console.debug(`[AudioManager] Playing buffer sound: ${name} (duration=${buffer.duration.toFixed(2)}s)`);
+          
+          if (!playBoth) return; // resolve handled by onended
+        } catch (err) {
+          this._preloadErrors[name] = err;
+          console.error(`[AudioManager] Error while starting buffer source for "${name}":`, err);
+        }
       }
-      // If playBoth is true, also play the synth sound
-      if (playBoth && typeof synthFn === 'function') {
-        try { synthFn(); } catch (sErr) { console.error(`[AudioManager] synthFn threw for playBoth ${name}:`, sErr); }
+
+      // synth fallback (or playBoth)
+      if (!playedBuffer || playBoth) {
+        if (typeof synthFn === 'function') {
+          try { 
+            const duration = synthFn(); 
+            if (!playedBuffer) {
+              if (duration > 0) {
+                setTimeout(resolve, duration * 1000);
+                return;
+              } else {
+                resolve();
+              }
+            }
+          } catch (sErr) { 
+            console.error(`[AudioManager] synthFn threw for ${name}:`, sErr); 
+            if (!playedBuffer) resolve();
+          }
+        } else {
+          if (!playedBuffer) {
+            console.warn(`[AudioManager] Missing sound buffer and no synth fallback provided for "${name}"`);
+            resolve();
+          }
+        }
       }
-    } else {
-      if (typeof synthFn === 'function') {
-        try { synthFn(); } catch (sErr) { console.error(`[AudioManager] synthFn threw for ${name}:`, sErr); }
-      } else {
-        console.warn(`[AudioManager] Missing sound buffer and no synth fallback provided for "${name}"`);
-      }
-    }
+    });
   }
 
   // ─── AMBIENT (looping per-cell audio) ─────────────────────────────────────
@@ -455,6 +475,18 @@ export class AudioManager {
       const g2 = this.ctx.createGain(); g2.gain.setValueAtTime(0.7, t + 0.05); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
       osc2.connect(g2); g2.connect(this.ctx.destination); osc2.start(t + 0.05); osc2.stop(t + 0.5);
     }, 0.15, true);
+  }
+
+  // ─── WASTED ───────────────────────────────────────────────────────────────
+  playWasted(volume = 2.0) {
+    return this._play('wasted', () => {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(); osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, t); osc.frequency.exponentialRampToValueAtTime(50, t + 1);
+      const g = this.ctx.createGain(); g.gain.setValueAtTime(0.5 * volume, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(t); osc.stop(t + 1.2);
+      return 1.2;
+    }, volume);
   }
 
   // ─── ON-DEMAND PING ───────────────────────────────────────────────────────

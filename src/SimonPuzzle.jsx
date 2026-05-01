@@ -196,6 +196,10 @@ export function SimonPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       }
       if (e.key === "Escape") {
         clearAll();
+        if (phaseRef.current === PHASE.RESULT && result === "correct") {
+          onSolve();
+          return;
+        }
         onSkip();
         return;
       }

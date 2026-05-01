@@ -194,6 +194,10 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     const handler = (e) => {
       if (e.key === "Escape") {
         clearAll();
+        if (phaseRef.current === PHASE.RESULT && result === "correct") {
+          onSolve();
+          return;
+        }
         onSkip();
         return;
       }
