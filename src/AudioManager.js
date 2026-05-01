@@ -10,32 +10,32 @@ import { SOUND_MAP } from './audio/soundMap.js';
 
 // Piano key → frequency map (A=C4 through K=C5)
 export const PIANO_KEYS = {
-  a: { note: 'C',  freq: 261.6 },
-  s: { note: 'D',  freq: 293.7 },
-  d: { note: 'E',  freq: 329.6 },
-  f: { note: 'F',  freq: 349.2 },
-  g: { note: 'G',  freq: 392.0 },
-  h: { note: 'A',  freq: 440.0 },
-  j: { note: 'B',  freq: 493.9 },
+  a: { note: 'C', freq: 261.6 },
+  s: { note: 'D', freq: 293.7 },
+  d: { note: 'E', freq: 329.6 },
+  f: { note: 'F', freq: 349.2 },
+  g: { note: 'G', freq: 392.0 },
+  h: { note: 'A', freq: 440.0 },
+  j: { note: 'B', freq: 493.9 },
   k: { note: 'C5', freq: 523.3 },
 };
 
 // Chord definitions using PIANO_KEYS
 export const CHORDS = [
-  { name: 'C Major', keys: new Set(['a','d','g']), freqs: [261.6, 329.6, 392.0] },
-  { name: 'G Major', keys: new Set(['s','g','j']), freqs: [293.7, 392.0, 493.9] },
-  { name: 'F Major', keys: new Set(['f','h','a']), freqs: [349.2, 440.0, 261.6] },
-  { name: 'A Minor', keys: new Set(['h','a','d']), freqs: [440.0, 261.6, 329.6] },
-  { name: 'D Minor', keys: new Set(['s','f','h']), freqs: [293.7, 349.2, 440.0] },
-  { name: 'E Major', keys: new Set(['d','g','j']), freqs: [329.6, 392.0, 493.9] },
+  { name: 'C Major', keys: new Set(['a', 'd', 'g']), freqs: [261.6, 329.6, 392.0] },
+  { name: 'G Major', keys: new Set(['s', 'g', 'j']), freqs: [293.7, 392.0, 493.9] },
+  { name: 'F Major', keys: new Set(['f', 'h', 'a']), freqs: [349.2, 440.0, 261.6] },
+  { name: 'A Minor', keys: new Set(['h', 'a', 'd']), freqs: [440.0, 261.6, 329.6] },
+  { name: 'D Minor', keys: new Set(['s', 'f', 'h']), freqs: [293.7, 349.2, 440.0] },
+  { name: 'E Major', keys: new Set(['d', 'g', 'j']), freqs: [329.6, 392.0, 493.9] },
 ];
 
 // Simon arrow note frequencies (spatially positioned)
 export const SIMON_NOTES = {
-  ArrowUp:    { freq: 523.3, pan: 0,    label: '↑' },
-  ArrowDown:  { freq: 130.8, pan: 0,    label: '↓' },
-  ArrowLeft:  { freq: 196.0, pan: -0.8, label: '←' },
-  ArrowRight: { freq: 329.6, pan: 0.8,  label: '→' },
+  ArrowUp: { freq: 523.3, pan: 0, label: '↑' },
+  ArrowDown: { freq: 130.8, pan: 0, label: '↓' },
+  ArrowLeft: { freq: 196.0, pan: -0.8, label: '←' },
+  ArrowRight: { freq: 329.6, pan: 0.8, label: '→' },
 };
 
 export class AudioManager {
@@ -43,10 +43,14 @@ export class AudioManager {
     this.ctx = null;
     this.isReady = false;
     this.soundBuffers = {};
+    this._preloadErrors = {};
     // Ambient state
     this._ambientNodes = [];
     // Active piano notes (for chord puzzle)
     this._activeNotes = {};
+    // Victory background music nodes (for fade out)
+    this._victoryBgNode = null;
+    this._victorySrcNode = null;
   }
 
   async init() {
@@ -68,23 +72,63 @@ export class AudioManager {
         const res = await fetch(config.file);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const ab = await res.arrayBuffer();
-        this.soundBuffers[name] = await this.ctx.decodeAudioData(ab);
+        // decodeAudioData may be promise-based or callback-based across browsers;
+        // await the result for modern browsers and fall back to callback wrapper.
+        try {
+          this.soundBuffers[name] = await this.ctx.decodeAudioData(ab);
+        } catch (dErr) {
+          try {
+            this.soundBuffers[name] = await new Promise((resolve, reject) => {
+              this.ctx.decodeAudioData(ab, resolve, reject);
+            });
+          } catch (cbErr) {
+            // store decode error for inspection and continue
+            this._preloadErrors[name] = cbErr;
+            console.warn(`[AudioManager] decodeAudioData failed for "${name}"`, cbErr && cbErr.message ? cbErr.message : cbErr);
+            continue;
+          }
+        }
+        // successful decode
+        console.info(`[AudioManager] Preloaded sound: ${name} -> ${config.file} (${this.soundBuffers[name]?.duration?.toFixed?.(2) ?? '?.?'}s)`);
       } catch (e) {
-        console.warn(`[AudioManager] "${name}" file load failed, using synthesis.`, e.message);
+        this._preloadErrors[name] = e;
+        console.warn(`[AudioManager] "${name}" file load failed, using synthesis.`, e && e.message ? e.message : e);
       }
     }
   }
 
-  _play(name, synthFn, vol = 1) {
-    if (!this.isReady) return;
+  _play(name, synthFn, vol = 1, playBoth = false) {
+    if (!this.isReady) {
+      console.warn(`[AudioManager] _play called before ready: ${name}`);
+      return;
+    }
+
     if (this.soundBuffers[name]) {
-      const src = this.ctx.createBufferSource();
-      src.buffer = this.soundBuffers[name];
-      const g = this.ctx.createGain();
-      g.gain.value = vol;
-      src.connect(g); g.connect(this.ctx.destination);
-      src.start();
-    } else { synthFn(); }
+      try {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.soundBuffers[name];
+        const g = this.ctx.createGain();
+        g.gain.value = vol;
+        src.connect(g); g.connect(this.ctx.destination);
+        src.start();
+        console.debug(`[AudioManager] Playing buffer sound: ${name} (duration=${this.soundBuffers[name].duration.toFixed(2)}s)`);
+      } catch (err) {
+        this._preloadErrors[name] = err;
+        console.error(`[AudioManager] Error while starting buffer source for "${name}":`, err);
+        // fall through to synth fallback if provided
+        if (!synthFn) return;
+      }
+      // If playBoth is true, also play the synth sound
+      if (playBoth && typeof synthFn === 'function') {
+        try { synthFn(); } catch (sErr) { console.error(`[AudioManager] synthFn threw for playBoth ${name}:`, sErr); }
+      }
+    } else {
+      if (typeof synthFn === 'function') {
+        try { synthFn(); } catch (sErr) { console.error(`[AudioManager] synthFn threw for ${name}:`, sErr); }
+      } else {
+        console.warn(`[AudioManager] Missing sound buffer and no synth fallback provided for "${name}"`);
+      }
+    }
   }
 
   // ─── AMBIENT (looping per-cell audio) ─────────────────────────────────────
@@ -189,8 +233,8 @@ export class AudioManager {
     clearTimeout(this._metronomeTimer);
     clearInterval(this._simonAmbientInterval);
     this._ambientNodes.forEach(n => {
-      try { n.stop?.(); } catch {}
-      try { n.disconnect?.(); } catch {}
+      try { n.stop?.(); } catch { }
+      try { n.disconnect?.(); } catch { }
     });
     this._ambientNodes = [];
   }
@@ -276,20 +320,91 @@ export class AudioManager {
   }
 
   // ─── VICTORY ──────────────────────────────────────────────────────────────
-  playVictory() {
-    this._play('victory', () => {
-      const t = this.ctx.currentTime;
-      const jingle = [
-        { f: 523.25, s: 0, d: 0.12 }, { f: 523.25, s: 0.14, d: 0.12 },
-        { f: 523.25, s: 0.28, d: 0.12 }, { f: 415.30, s: 0.42, d: 0.12 },
-        { f: 523.25, s: 0.56, d: 0.12 }, { f: 659.25, s: 0.70, d: 0.4  },
-      ];
-      jingle.forEach(({ f, s, d }) => {
-        const osc = this.ctx.createOscillator(); osc.type = 'square'; osc.frequency.value = f;
-        const g = this.ctx.createGain(); g.gain.setValueAtTime(0.2, t + s); g.gain.exponentialRampToValueAtTime(0.001, t + s + d);
-        osc.connect(g); g.connect(this.ctx.destination); osc.start(t + s); osc.stop(t + s + d + 0.05);
+  playVictory(volume = 0.25, fadeOutDuration = 2) {
+    if (!this.isReady) return;
+
+    // Ensure AudioContext is running (browser autoplay policy may suspend it)
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().then(() => this._playVictoryInternal(volume, fadeOutDuration));
+      return;
+    }
+    this._playVictoryInternal(volume, fadeOutDuration);
+  }
+
+  _playVictoryInternal(volume, fadeOutDuration) {
+    // Stop any previous victory sound
+    if (this._victorySrcNode) {
+      try { this._victorySrcNode.stop(); } catch (e) { }
+      this._victorySrcNode = null;
+    }
+
+    // Play buffer if available
+    if (this.soundBuffers['victory']) {
+      try {
+        const t = this.ctx.currentTime;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.soundBuffers['victory'];
+        src.loop = false; // play once — it's a game-over sting, not a loop
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(volume, t);
+        src.connect(gainNode); gainNode.connect(this.ctx.destination);
+        src.start(t);
+        this._victorySrcNode = src;
+        src.onended = () => { this._victorySrcNode = null; };
+        console.debug('[AudioManager] Playing game-over/victory buffer sound');
+        return;
+      } catch (err) {
+        console.error('[AudioManager] Error playing decoded victory buffer, will try fallbacks', err);
+      }
+    }
+
+    // No decoded buffer available — try HTMLAudio, then synth fallback
+    console.warn('[AudioManager] Victory sound not available as decoded buffer - attempting HTMLAudio then synth fallback');
+    const vf = SOUND_MAP.victory && SOUND_MAP.victory.file;
+    const synthFallback = () => {
+      try {
+        const t = this.ctx.currentTime;
+        [{ f: 523.25, s: 0, d: .12 }, { f: 523.25, s: .14, d: .12 }, { f: 523.25, s: .28, d: .12 }, { f: 415.3, s: .42, d: .12 }, { f: 523.25, s: .56, d: .12 }, { f: 659.25, s: .7, d: .4 }].forEach(({ f, s, d }) => {
+          const i = this.ctx.createOscillator(); i.type = 'square'; i.frequency.value = f;
+          const o = this.ctx.createGain(); o.gain.setValueAtTime(0.2, t + s); o.gain.exponentialRampToValueAtTime(0.001, t + s + d);
+          i.connect(o); o.connect(this.ctx.destination); i.start(t + s); i.stop(t + s + d + 0.05);
+        });
+      } catch (sErr) { console.error('[AudioManager] synth fallback failed for victory', sErr); }
+    };
+
+    if (vf) {
+      try {
+        const a = new Audio(vf);
+        a.volume = Math.max(0, Math.min(1, volume));
+        a.play().catch((err) => {
+          console.warn('[AudioManager] HTMLAudio fallback failed for victory, using synth', err);
+          synthFallback();
+        });
+      } catch (err) {
+        console.warn('[AudioManager] Victory HTMLAudio construction failed, using synth', err);
+        synthFallback();
+      }
+    } else {
+      synthFallback();
+    }
+  }
+
+  // playGameOver: dedicated entry point — resumes context then plays the victory/game-over sound
+  playGameOver(volume = 0.25, fadeOutDuration = 2) {
+    if (!this.isReady) {
+      console.warn('[AudioManager] playGameOver called before AudioManager is ready');
+      return;
+    }
+    // Always resume the AudioContext first in case it was suspended
+    const doPlay = () => this._playVictoryInternal(volume, fadeOutDuration);
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().then(doPlay).catch((err) => {
+        console.error('[AudioManager] Could not resume AudioContext for game over sound', err);
+        doPlay(); // attempt anyway
       });
-    });
+    } else {
+      doPlay();
+    }
   }
 
   // ─── DANGER GROWL (spatial) ───────────────────────────────────────────────
@@ -323,7 +438,7 @@ export class AudioManager {
       osc2.frequency.setValueAtTime(120, t + 0.05); osc2.frequency.exponentialRampToValueAtTime(30, t + 0.4);
       const g2 = this.ctx.createGain(); g2.gain.setValueAtTime(0.7, t + 0.05); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
       osc2.connect(g2); g2.connect(this.ctx.destination); osc2.start(t + 0.05); osc2.stop(t + 0.5);
-    });
+    }, 0.15, true);
   }
 
   // ─── ON-DEMAND PING ───────────────────────────────────────────────────────
@@ -362,7 +477,7 @@ export class AudioManager {
     note.gain.gain.cancelScheduledValues(t);
     note.gain.gain.setValueAtTime(note.gain.gain.value, t);
     note.gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
-    setTimeout(() => { try { note.osc.stop(); } catch {} }, 200);
+    setTimeout(() => { try { note.osc.stop(); } catch { } }, 200);
     delete this._activeNotes[key];
   }
 
@@ -431,7 +546,7 @@ export class AudioManager {
       case 0: // PATH — soft step
         freq = 350; type = 'sine'; vol = 0.07; dur = 0.08; break;
       case 1: // WALL — dull thud
-        freq = 80;  type = 'sine'; vol = 0.2;  dur = 0.12; break;
+        freq = 80; type = 'sine'; vol = 0.2; dur = 0.12; break;
       case 2: // EXIT — bright ding
         freq = 880; type = 'sine'; vol = 0.12; dur = 0.25; break;
       case 3: // WORDLE — soft mystical

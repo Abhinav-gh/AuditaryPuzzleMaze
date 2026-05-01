@@ -134,9 +134,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
           phaseRef.current = PHASE.RECORDING;
           tapsRef.current = [];
           setTaps([]);
-          speakAndThen(
-            "Your turn! Tap Space to match the rhythm. Press I to repeat instructions.",
-          );
+          speakAndThen("Your turn!");
         } else {
           setCountdown(countValues[index]);
         }
@@ -205,12 +203,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       }
       if (e.code === "Space") {
         e.preventDefault();
-        // If narrator is speaking, Space silences it (do NOT count as tap)
-        if (window.speechSynthesis.speaking) {
-          window.speechSynthesis.cancel();
-          return;
-        }
-        // Otherwise tap if in recording phase
+        // In RECORDING phase, Space ALWAYS records a tap (never silences narrator)
         if (phaseRef.current === PHASE.RECORDING) {
           const now = performance.now();
           tapsRef.current = [...tapsRef.current, now];
@@ -221,6 +214,12 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
           if (tapsRef.current.length >= pattern.length) {
             setTimeout(() => submitTaps(), 400);
           }
+          return;
+        }
+        // In other phases, Space silences the narrator (do NOT count as tap)
+        if (window.speechSynthesis.speaking) {
+          window.speechSynthesis.cancel();
+          return;
         }
       }
     };

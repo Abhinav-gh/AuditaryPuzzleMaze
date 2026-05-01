@@ -400,7 +400,7 @@ export default function App() {
 
       if (ct === CELL.EXIT) {
         audioRef.current.stopAmbient();
-        audioRef.current.playVictory();
+        audioRef.current.playGameOver(0.25); // Play Game_Over.mp3 — resumes AudioContext if suspended
         setScreen("won");
         addLog(`🏆 EXIT REACHED!`);
         speak(
@@ -444,7 +444,7 @@ export default function App() {
       updateAmbient(lv, nx, ny, dangers);
       const openD = getOpenDirections(lv, nx, ny).join(", ") || "none";
       addLog(`👣 Moved ${dir.label} → (${nx},${ny})`);
-      speak(`Moved ${dir.label}. Open: ${openD}.`);
+      speak(`Moved ${dir.label}. Open: ${openD}.`, { priority: true });
     };
 
     window.addEventListener("keydown", handleKey);
