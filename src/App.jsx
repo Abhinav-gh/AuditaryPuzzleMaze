@@ -453,21 +453,18 @@ export default function App() {
     setSolvedPuzzles((prev) => ({ ...prev, [`${x},${y}`]: true }));
     setPhase("playing");
     phaseRef.current = "playing";
-    audioRef.current.playCorrect();
     const lv = levelRef.current;
     const dangers = getAdjacentDangers(lv, x, y);
     setNearDanger(dangers);
     updateAmbient(lv, x, y, dangers);
     addLog("✅ Puzzle solved — path unlocked!");
     
-    let msg = "";
     if (dangers.length > 0) {
       const dirs = dangers.map((d) => d.dir).join(" and ");
-      msg += `Warning. Danger to the ${dirs}. `;
+      const msg = `Warning. Danger to the ${dirs}. `;
       dangers.forEach(({ dir }) => audioRef.current.playDangerGrowl(panOf(dir), 0.45));
+      speak(msg, { priority: true });
     }
-    msg += "Excellent. Puzzle solved. Keep going.";
-    speak(msg, { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   const handlePuzzleSkip = useCallback(() => {

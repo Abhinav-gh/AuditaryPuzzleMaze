@@ -143,31 +143,33 @@ export function SimonPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       setUserInput([...newInput]);
       const step = newInput.length - 1;
 
-      if (newInput[step] !== seqRef.current[step]) {
-        // Not quite — replay from start (no lives)
-        audioManager?.playWrong();
-        setResult("wrong");
-        speakBriefAndThen("Not quite. Listen again.", () => {
-          setResult(null);
-          playSequence(seqRef.current, { announceTurn: true });
-        });
-        return;
-      }
-
       if (newInput.length === seqRef.current.length) {
         setPhase(PHASE.RESULT);
         phaseRef.current = PHASE.RESULT;
-        setResult("correct");
-        audioManager?.playCorrect();
-        const utter = new SpeechSynthesisUtterance(
-          "Excellent! Sequence complete. Puzzle solved!",
-        );
-        utter.rate = 0.85;
-        // Wait for narrator to finish before closing puzzle
-        utter.onend = () => {
-          onSolve();
-        };
-        window.speechSynthesis?.speak(utter);
+        
+        const isCorrect = newInput.every((k, i) => k === seqRef.current[i]);
+
+        if (isCorrect) {
+          setResult("correct");
+          audioManager?.playCorrect();
+          window.speechSynthesis?.cancel();
+          const utter = new SpeechSynthesisUtterance(
+            "Excellent! Sequence complete. Puzzle solved!",
+          );
+          utter.rate = 0.85;
+          // Wait for narrator to finish before closing puzzle
+          utter.onend = () => {
+            onSolve();
+          };
+          window.speechSynthesis?.speak(utter);
+        } else {
+          audioManager?.playWrong();
+          setResult("wrong");
+          speakBriefAndThen("Not quite. Listen again.", () => {
+            setResult(null);
+            playSequence(seqRef.current, { announceTurn: true });
+          });
+        }
       }
     },
     [audioManager, onSolve, playSequence],
