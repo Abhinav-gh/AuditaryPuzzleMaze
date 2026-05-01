@@ -70,7 +70,7 @@ function buildInstructions(phase, levelId) {
   if (phase === "level-select")
     return `Level select screen. Press 1 for ${LEVELS[0].name} — ${LEVELS[0].description}. Press 2 for ${LEVELS[1].name} — ${LEVELS[1].description}. Press I to hear this again. Hold Escape to go back.`;
   if (phase === "playing")
-    return `You're playing ${LEVELS[levelId - 1]?.name ?? "the maze"}. Use Arrow keys or W A S D to move. Press P for a directional audio ping to the exit. Move your mouse in any direction to hear a sound preview of what's there. Press I to repeat instructions. Press Space to silence the narrator. Puzzle cells start a mini game — press Escape to skip and be moved back. Danger cells growl when adjacent!`;
+    return `You're playing ${LEVELS[levelId - 1]?.name ?? "the maze"}. Use Arrow keys or W A S D to move. Press P for a directional audio ping to the exit. Press I to repeat instructions. Press Space to silence the narrator. Puzzle cells start a mini game — press Escape to skip and be moved back. Danger cells growl when adjacent!`;
   if (phase === "wordle")
     return `Word puzzle. Listen to the phonetic clue, type a 3-letter word, press Enter. Press R to replay the clue, press I to repeat these instructions, press Space to silence narrator, and Escape to skip.`;
   if (phase === "chord")
@@ -164,9 +164,6 @@ export default function App() {
         );
         const dirs = dangers.map((d) => d.dir).join(" and ");
         addLog(`⚠️ Danger growling to the ${dirs}!`);
-        speak(`Warning! Danger to the ${dirs}. Stay alert!`, {
-          priority: true,
-        });
         return dangers;
       }
       return [];
@@ -174,66 +171,7 @@ export default function App() {
     [addLog, speak],
   );
 
-  // ── Mouse DIRECTION sound preview ─────────────────────────────────────────
-  // Samples mouse position every 300ms; if moved > 20px, plays preview of
-  // what's in that direction from the player.
-  useEffect(() => {
-    if (
-      screen !== "playing" ||
-      !PUZZLE_PHASES.concat("playing").includes(phase)
-    )
-      return;
 
-    const trackMouse = (e) => {
-      mouseCurRef.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener("mousemove", trackMouse);
-
-    const interval = setInterval(() => {
-      if (phaseRef.current !== "playing") return;
-      const cur = mouseCurRef.current;
-      const last = mousePosRef.current;
-      if (!cur) return;
-      if (!last) {
-        mousePosRef.current = { ...cur };
-        return;
-      }
-
-      const dx = cur.x - last.x;
-      const dy = cur.y - last.y;
-      mousePosRef.current = { ...cur };
-
-      if (Math.abs(dx) < 20 && Math.abs(dy) < 20) return; // not enough movement
-
-      const dir =
-        Math.abs(dx) > Math.abs(dy)
-          ? dx > 0
-            ? "east"
-            : "west"
-          : dy > 0
-            ? "south"
-            : "north";
-
-      const lv = levelRef.current;
-      if (!lv) return;
-      const { x, y } = posRef.current;
-      const d = DIR_DELTA[dir];
-      const tx = x + d.dx,
-        ty = y + d.dy;
-
-      let cellType;
-      if (tx < 0 || tx >= lv.cols || ty < 0 || ty >= lv.rows)
-        cellType = CELL.WALL;
-      else cellType = getCell(lv, tx, ty);
-
-      audioRef.current?.playHoverPreview(cellType, dir);
-    }, 1000);
-
-    return () => {
-      window.removeEventListener("mousemove", trackMouse);
-      clearInterval(interval);
-    };
-  }, [screen, phase]);
 
   // ── Global Space and I = silence narrator / repeat instructions ───────────
   useEffect(() => {
@@ -286,7 +224,14 @@ export default function App() {
     const dangers = checkDanger(lv, lv.start.x, lv.start.y);
     updateAmbient(lv, lv.start.x, lv.start.y, dangers);
     addLog(`${lv.name} started!`);
-    speak(buildInstructions("playing", lv.id), { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+    }
+    msg += buildInstructions("playing", lv.id);
+    speak(msg, { priority: true });
   };
 
   const resetToMenu = useCallback(() => {
@@ -350,9 +295,9 @@ export default function App() {
         const ed = exitDir(cur.x, cur.y, lv.exit);
         const d = dist(cur.x, cur.y, lv.exit.x, lv.exit.y);
         audioRef.current.playPing(ed, d);
-        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away)`);
+        addLog(`📡 Ping → ${ed} (${d.toFixed(1)} away). Pos: row ${cur.y}, col ${cur.x}`);
         speak(
-          `Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells.`,
+          `You are at row ${cur.y} and column ${cur.x}. Exit is to the ${ed.replace("-", " ")}. Distance ${d.toFixed(1)} cells.`,
         );
         return;
       }
@@ -384,9 +329,38 @@ export default function App() {
       }
 
       if (ct === CELL.DANGER) {
-        audioRef.current.playDangerHit();
-        addLog(`💀 Stepped on DANGER — pushed back!`);
-        speak(`You stepped on a creature — pushed back!`, { priority: true });
+        setPhase("dead");
+        phaseRef.current = "dead";
+        addLog(`💀 WASTED!`);
+        
+        window.speechSynthesis?.cancel();
+        audioRef.current.stopAmbient();
+        
+        audioRef.current.playWasted(2.0).then(() => {
+          speak(`Wasted.`, { priority: true });
+          
+          setTimeout(() => {
+            setPos(lv.start);
+            posRef.current = lv.start;
+            prevPosRef.current = lv.start;
+            setVisitedCells(new Set([`${lv.start.x},${lv.start.y}`]));
+            
+            const dangers = checkDanger(lv, lv.start.x, lv.start.y);
+            updateAmbient(lv, lv.start.x, lv.start.y, dangers);
+            
+            let msg = "";
+            if (dangers.length > 0) {
+              const dirs = dangers.map((d) => d.dir).join(" and ");
+              msg += `Warning. Danger to the ${dirs}. `;
+            }
+            msg += `You died and were teleported back to the beginning of the puzzle.`;
+            speak(msg, { priority: true });
+            
+            setPhase("playing");
+            phaseRef.current = "playing";
+          }, 1500);
+        });
+
         return;
       }
 
@@ -400,11 +374,11 @@ export default function App() {
 
       if (ct === CELL.EXIT) {
         audioRef.current.stopAmbient();
-        audioRef.current.playVictory();
+        audioRef.current.playGameOver(0.25); // Play Game_Over.mp3 — resumes AudioContext if suspended
         setScreen("won");
         addLog(`🏆 EXIT REACHED!`);
         speak(
-          `Congratulations! You escaped the maze in ${moves + 1} moves! Press Enter to play again, L for level select, or hold Escape for the main menu.`,
+          `Congratulations. You escaped the maze in ${moves + 1} moves. Press Enter to play again, L for level select, or hold Escape for the main menu.`,
           { priority: true },
         );
         return;
@@ -425,9 +399,13 @@ export default function App() {
           [CELL.SIMON]: "Simon Says",
         }[ct];
         addLog(`🔐 ${kindLabel} Puzzle at (${nx},${ny})`);
-        speak(`${kindLabel} puzzle found! Press I for instructions.`, {
-          priority: true,
-        });
+        const instructionKey = ct === CELL.WORDLE ? "2" : "I";
+        speak(
+          `${kindLabel} puzzle found. Press ${instructionKey} for instructions.`,
+          {
+            priority: true,
+          },
+        );
         setPhase(phaseName);
         phaseRef.current = phaseName;
         audioRef.current.stopAmbient();
@@ -444,7 +422,14 @@ export default function App() {
       updateAmbient(lv, nx, ny, dangers);
       const openD = getOpenDirections(lv, nx, ny).join(", ") || "none";
       addLog(`👣 Moved ${dir.label} → (${nx},${ny})`);
-      speak(`Moved ${dir.label}. Open: ${openD}.`);
+      
+      let msg = "";
+      if (dangers.length > 0) {
+        const dirs = dangers.map((d) => d.dir).join(" and ");
+        msg += `Warning. Danger to the ${dirs}. Stay alert. `;
+      }
+      msg += `Moved ${dir.label}. Open: ${openD}.`;
+      speak(msg, { priority: true });
     };
 
     window.addEventListener("keydown", handleKey);
@@ -474,7 +459,15 @@ export default function App() {
     setNearDanger(dangers);
     updateAmbient(lv, x, y, dangers);
     addLog("✅ Puzzle solved — path unlocked!");
-    speak("Excellent! Puzzle solved. Keep going!", { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+      dangers.forEach(({ dir }) => audioRef.current.playDangerGrowl(panOf(dir), 0.45));
+    }
+    msg += "Excellent. Puzzle solved. Keep going.";
+    speak(msg, { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   const handlePuzzleSkip = useCallback(() => {
@@ -488,7 +481,15 @@ export default function App() {
     setNearDanger(dangers);
     updateAmbient(lv, prev.x, prev.y, dangers);
     addLog(`⏭️ Skipped — back to (${prev.x},${prev.y})`);
-    speak("Puzzle skipped. Moved back.", { priority: true });
+    
+    let msg = "";
+    if (dangers.length > 0) {
+      const dirs = dangers.map((d) => d.dir).join(" and ");
+      msg += `Warning. Danger to the ${dirs}. `;
+      dangers.forEach(({ dir }) => audioRef.current.playDangerGrowl(panOf(dir), 0.45));
+    }
+    msg += "Puzzle skipped. Moved back.";
+    speak(msg, { priority: true });
   }, [addLog, speak, updateAmbient]);
 
   // Restart: remount puzzle without moving player

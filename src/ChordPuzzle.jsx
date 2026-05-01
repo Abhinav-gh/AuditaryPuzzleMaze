@@ -92,12 +92,14 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       const utter = new SpeechSynthesisUtterance(
         `Correct! That's ${target.name}! Puzzle solved!`,
       );
-      window.speechSynthesis?.speak(utter);
-      sustainTimerRef.current = setTimeout(() => {
+      utter.rate = 0.85;
+      // Wait for narrator to finish before closing puzzle
+      utter.onend = () => {
         stopHeldNotes();
         sustainAfterSolveRef.current = false;
         onSolve();
-      }, 2200);
+      };
+      window.speechSynthesis?.speak(utter);
     } else {
       setStatus("wrong");
       audioManager?.playWrong();
@@ -118,6 +120,10 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       }
       if (e.key === "Escape") {
         audioManager?.stopAllNotes();
+        if (statusRef.current === "correct") {
+          onSolve();
+          return;
+        }
         onSkip();
         return;
       }
