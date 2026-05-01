@@ -166,6 +166,7 @@ export function RhythmPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
     if (matchesPattern(pattern, recorded)) {
       setResult("correct");
       audioManager?.playCorrect();
+      window.speechSynthesis?.cancel();
       const utter = new SpeechSynthesisUtterance(
         "Spot on! Rhythm matched. Puzzle solved!",
       );

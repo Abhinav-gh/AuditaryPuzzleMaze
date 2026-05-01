@@ -152,6 +152,7 @@ export function SimonPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
         if (isCorrect) {
           setResult("correct");
           audioManager?.playCorrect();
+          window.speechSynthesis?.cancel();
           const utter = new SpeechSynthesisUtterance(
             "Excellent! Sequence complete. Puzzle solved!",
           );

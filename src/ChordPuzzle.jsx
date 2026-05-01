@@ -89,6 +89,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       audioManager?.playCorrect();
       sustainAfterSolveRef.current = true;
       clearSustainTimer();
+      window.speechSynthesis?.cancel();
       const utter = new SpeechSynthesisUtterance(
         `Correct! That's ${target.name}! Puzzle solved!`,
       );

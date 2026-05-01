@@ -63,6 +63,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
     if (upper === target.word) {
       setSolved(true);
       audioManager?.playCorrect();
+      window.speechSynthesis?.cancel();
       const utter = new SpeechSynthesisUtterance(
         `Correct! The word was ${target.word}. Puzzle solved! Path unlocked.`,
       );
