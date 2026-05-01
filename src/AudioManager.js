@@ -68,31 +68,43 @@ export class AudioManager {
   async _preloadSounds() {
     for (const [name, config] of Object.entries(SOUND_MAP)) {
       if (!config.file) continue;
-      try {
-        const res = await fetch(config.file);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const ab = await res.arrayBuffer();
-        // decodeAudioData may be promise-based or callback-based across browsers;
-        // await the result for modern browsers and fall back to callback wrapper.
+
+      const files = Array.isArray(config.file) ? config.file : [config.file];
+      this.soundBuffers[name] = [];
+
+      for (const file of files) {
         try {
-          this.soundBuffers[name] = await this.ctx.decodeAudioData(ab);
-        } catch (dErr) {
+          const res = await fetch(file);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const ab = await res.arrayBuffer();
+          let decodedBuffer;
+          // decodeAudioData may be promise-based or callback-based across browsers;
+          // await the result for modern browsers and fall back to callback wrapper.
           try {
-            this.soundBuffers[name] = await new Promise((resolve, reject) => {
-              this.ctx.decodeAudioData(ab, resolve, reject);
-            });
-          } catch (cbErr) {
-            // store decode error for inspection and continue
-            this._preloadErrors[name] = cbErr;
-            console.warn(`[AudioManager] decodeAudioData failed for "${name}"`, cbErr && cbErr.message ? cbErr.message : cbErr);
-            continue;
+            decodedBuffer = await this.ctx.decodeAudioData(ab);
+          } catch (dErr) {
+            try {
+              decodedBuffer = await new Promise((resolve, reject) => {
+                this.ctx.decodeAudioData(ab, resolve, reject);
+              });
+            } catch (cbErr) {
+              // store decode error for inspection and continue
+              this._preloadErrors[`${name}_${file}`] = cbErr;
+              console.warn(`[AudioManager] decodeAudioData failed for "${name}" -> "${file}"`, cbErr && cbErr.message ? cbErr.message : cbErr);
+              continue;
+            }
           }
+          // successful decode
+          this.soundBuffers[name].push(decodedBuffer);
+          console.info(`[AudioManager] Preloaded sound: ${name} -> ${file} (${decodedBuffer?.duration?.toFixed?.(2) ?? '?.?'}s)`);
+        } catch (e) {
+          this._preloadErrors[`${name}_${file}`] = e;
+          console.warn(`[AudioManager] "${name}" -> "${file}" file load failed, using synthesis.`, e && e.message ? e.message : e);
         }
-        // successful decode
-        console.info(`[AudioManager] Preloaded sound: ${name} -> ${config.file} (${this.soundBuffers[name]?.duration?.toFixed?.(2) ?? '?.?'}s)`);
-      } catch (e) {
-        this._preloadErrors[name] = e;
-        console.warn(`[AudioManager] "${name}" file load failed, using synthesis.`, e && e.message ? e.message : e);
+      }
+
+      if (this.soundBuffers[name].length === 0) {
+        delete this.soundBuffers[name];
       }
     }
   }
@@ -103,15 +115,17 @@ export class AudioManager {
       return;
     }
 
-    if (this.soundBuffers[name]) {
+    if (this.soundBuffers[name] && this.soundBuffers[name].length > 0) {
       try {
+        const buffers = this.soundBuffers[name];
+        const buffer = buffers[Math.floor(Math.random() * buffers.length)];
         const src = this.ctx.createBufferSource();
-        src.buffer = this.soundBuffers[name];
+        src.buffer = buffer;
         const g = this.ctx.createGain();
         g.gain.value = vol;
         src.connect(g); g.connect(this.ctx.destination);
         src.start();
-        console.debug(`[AudioManager] Playing buffer sound: ${name} (duration=${this.soundBuffers[name].duration.toFixed(2)}s)`);
+        console.debug(`[AudioManager] Playing buffer sound: ${name} (duration=${buffer.duration.toFixed(2)}s)`);
       } catch (err) {
         this._preloadErrors[name] = err;
         console.error(`[AudioManager] Error while starting buffer source for "${name}":`, err);
@@ -339,11 +353,12 @@ export class AudioManager {
     }
 
     // Play buffer if available
-    if (this.soundBuffers['victory']) {
+    if (this.soundBuffers['victory'] && this.soundBuffers['victory'].length > 0) {
       try {
         const t = this.ctx.currentTime;
         const src = this.ctx.createBufferSource();
-        src.buffer = this.soundBuffers['victory'];
+        const buffers = this.soundBuffers['victory'];
+        src.buffer = buffers[Math.floor(Math.random() * buffers.length)];
         src.loop = false; // play once — it's a game-over sting, not a loop
         const gainNode = this.ctx.createGain();
         gainNode.gain.setValueAtTime(volume, t);
@@ -360,7 +375,8 @@ export class AudioManager {
 
     // No decoded buffer available — try HTMLAudio, then synth fallback
     console.warn('[AudioManager] Victory sound not available as decoded buffer - attempting HTMLAudio then synth fallback');
-    const vf = SOUND_MAP.victory && SOUND_MAP.victory.file;
+    const vfSource = SOUND_MAP.victory && SOUND_MAP.victory.file;
+    const vf = Array.isArray(vfSource) ? vfSource[Math.floor(Math.random() * vfSource.length)] : vfSource;
     const synthFallback = () => {
       try {
         const t = this.ctx.currentTime;

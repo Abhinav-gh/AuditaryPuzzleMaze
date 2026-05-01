@@ -70,7 +70,7 @@ function buildInstructions(phase, levelId) {
   if (phase === "level-select")
     return `Level select screen. Press 1 for ${LEVELS[0].name} — ${LEVELS[0].description}. Press 2 for ${LEVELS[1].name} — ${LEVELS[1].description}. Press I to hear this again. Hold Escape to go back.`;
   if (phase === "playing")
-    return `You're playing ${LEVELS[levelId - 1]?.name ?? "the maze"}. Use Arrow keys or W A S D to move. Press P for a directional audio ping to the exit. Move your mouse in any direction to hear a sound preview of what's there. Press I to repeat instructions. Press Space to silence the narrator. Puzzle cells start a mini game — press Escape to skip and be moved back. Danger cells growl when adjacent!`;
+    return `You're playing ${LEVELS[levelId - 1]?.name ?? "the maze"}. Use Arrow keys or W A S D to move. Press P for a directional audio ping to the exit. Press I to repeat instructions. Press Space to silence the narrator. Puzzle cells start a mini game — press Escape to skip and be moved back. Danger cells growl when adjacent!`;
   if (phase === "wordle")
     return `Word puzzle. Listen to the phonetic clue, type a 3-letter word, press Enter. Press R to replay the clue, press I to repeat these instructions, press Space to silence narrator, and Escape to skip.`;
   if (phase === "chord")
@@ -174,66 +174,7 @@ export default function App() {
     [addLog, speak],
   );
 
-  // ── Mouse DIRECTION sound preview ─────────────────────────────────────────
-  // Samples mouse position every 300ms; if moved > 20px, plays preview of
-  // what's in that direction from the player.
-  useEffect(() => {
-    if (
-      screen !== "playing" ||
-      !PUZZLE_PHASES.concat("playing").includes(phase)
-    )
-      return;
 
-    const trackMouse = (e) => {
-      mouseCurRef.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener("mousemove", trackMouse);
-
-    const interval = setInterval(() => {
-      if (phaseRef.current !== "playing") return;
-      const cur = mouseCurRef.current;
-      const last = mousePosRef.current;
-      if (!cur) return;
-      if (!last) {
-        mousePosRef.current = { ...cur };
-        return;
-      }
-
-      const dx = cur.x - last.x;
-      const dy = cur.y - last.y;
-      mousePosRef.current = { ...cur };
-
-      if (Math.abs(dx) < 20 && Math.abs(dy) < 20) return; // not enough movement
-
-      const dir =
-        Math.abs(dx) > Math.abs(dy)
-          ? dx > 0
-            ? "east"
-            : "west"
-          : dy > 0
-            ? "south"
-            : "north";
-
-      const lv = levelRef.current;
-      if (!lv) return;
-      const { x, y } = posRef.current;
-      const d = DIR_DELTA[dir];
-      const tx = x + d.dx,
-        ty = y + d.dy;
-
-      let cellType;
-      if (tx < 0 || tx >= lv.cols || ty < 0 || ty >= lv.rows)
-        cellType = CELL.WALL;
-      else cellType = getCell(lv, tx, ty);
-
-      audioRef.current?.playHoverPreview(cellType, dir);
-    }, 1000);
-
-    return () => {
-      window.removeEventListener("mousemove", trackMouse);
-      clearInterval(interval);
-    };
-  }, [screen, phase]);
 
   // ── Global Space and I = silence narrator / repeat instructions ───────────
   useEffect(() => {
@@ -386,7 +327,9 @@ export default function App() {
       if (ct === CELL.DANGER) {
         audioRef.current.playDangerHit();
         addLog(`💀 Stepped on DANGER — pushed back!`);
-        speak(`You stepped on a creature and were pushed back.`, { priority: true });
+        speak(`You stepped on a creature and were pushed back.`, {
+          priority: true,
+        });
         return;
       }
 
@@ -426,9 +369,12 @@ export default function App() {
         }[ct];
         addLog(`🔐 ${kindLabel} Puzzle at (${nx},${ny})`);
         const instructionKey = ct === CELL.WORDLE ? "2" : "I";
-        speak(`${kindLabel} puzzle found. Press ${instructionKey} for instructions.`, {
-          priority: true,
-        });
+        speak(
+          `${kindLabel} puzzle found. Press ${instructionKey} for instructions.`,
+          {
+            priority: true,
+          },
+        );
         setPhase(phaseName);
         phaseRef.current = phaseName;
         audioRef.current.stopAmbient();
