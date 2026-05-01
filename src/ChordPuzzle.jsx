@@ -61,7 +61,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
 
     window.speechSynthesis?.cancel(); // IMPORTANT: clear any previous speech
 
-    const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys — C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits — keep trying! Press R to replay. Press Escape to skip.`;
+    const intro = `Chord puzzle! Listen to the target chord now. Your keyboard keys A through K are piano keys: C, D, E, F, G, A, B, and high C. Hold 3 keys together to play a chord. Match the target chord to solve. There are no wrong-answer limits,  keep trying! Press R to replay, I for instructions, Space to silence narrator, and Escape to skip.`;
 
     const utter = new SpeechSynthesisUtterance(intro);
     utter.rate = 0.9;
@@ -105,7 +105,7 @@ export function ChordPuzzle({ audioManager, onSolve, onSkip, onRestart }) {
       audioManager?.playWrong();
       const held3 = [...held].map((k) => PIANO_KEYS[k]?.note).join("+");
       const utter = new SpeechSynthesisUtterance(
-        `Wrong combination: ${held3}. Keep exploring — no limit on attempts!`,
+        `Wrong combination: ${held3}. Keep exploring, no limit on attempts!`,
       );
       window.speechSynthesis?.speak(utter);
       setTimeout(() => setStatus("playing"), 1300);
