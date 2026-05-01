@@ -6,50 +6,9 @@
 //  - ARIA roles for screen reader support
 
 import React, { useState, useEffect, useCallback } from "react";
+import { getRandomWord } from "./wordleData";
 
-const WORD_BANK = [
-  "CAT",
-  "DOG",
-  "MAP",
-  "RUN",
-  "SUN",
-  "BIG",
-  "FAN",
-  "HOP",
-  "JAM",
-  "KEY",
-  "HIT",
-  "CUP",
-];
-
-const PHONETICS = {
-  A: "Alpha",
-  B: "Bravo",
-  C: "Charlie",
-  D: "Delta",
-  E: "Echo",
-  F: "Foxtrot",
-  G: "Golf",
-  H: "Hotel",
-  I: "India",
-  J: "Juliet",
-  K: "Kilo",
-  L: "Lima",
-  M: "Mike",
-  N: "November",
-  O: "Oscar",
-  P: "Papa",
-  Q: "Quebec",
-  R: "Romeo",
-  S: "Sierra",
-  T: "Tango",
-  U: "Uniform",
-  V: "Victor",
-  W: "Whiskey",
-  X: "X-ray",
-  Y: "Yankee",
-  Z: "Zulu",
-};
+// WORD_BANK is now imported from wordleData.js
 
 const MAX_GUESSES = 4;
 
@@ -59,17 +18,12 @@ function getTileState(guess, target, index) {
   return "absent";
 }
 
-function buildClueText(target) {
-  return target
-    .split("")
-    .map((l) => PHONETICS[l])
-    .join(" ... ");
+function buildClueText(targetObj) {
+  return targetObj.clue;
 }
 
 export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
-  const [target] = useState(
-    () => WORD_BANK[Math.floor(Math.random() * WORD_BANK.length)],
-  );
+  const [target] = useState(() => getRandomWord());
   const [guesses, setGuesses] = useState([]);
   const [current, setCurrent] = useState("");
   const [solved, setSolved] = useState(false);
@@ -89,7 +43,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
   // Auto-speak on mount
   useEffect(() => {
     audioManager?.playPuzzleFound();
-    const msg = `Word puzzle unlocked! Guess the three-letter word using the phonetic clue. Press R at any time to hear the clue again. Press I to repeat these instructions. Press Escape to skip.`;
+    const msg = `Word puzzle unlocked! Guess the three-letter word using the audio clue. You have four attempts. Press R at any time to hear the clue again. Press I to repeat these instructions. Press Escape to skip.`;
     const utter = new SpeechSynthesisUtterance(msg);
     utter.rate = 0.9;
     window.speechSynthesis?.speak(utter);
@@ -104,11 +58,11 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
     setGuesses(newGuesses);
     setCurrent("");
 
-    if (upper === target) {
+    if (upper === target.word) {
       setSolved(true);
       audioManager?.playCorrect();
       const utter = new SpeechSynthesisUtterance(
-        `Correct! The word was ${target}. Puzzle solved! Path unlocked.`,
+        `Correct! The word was ${target.word}. Puzzle solved! Path unlocked.`,
       );
       window.speechSynthesis?.speak(utter);
       setTimeout(() => onSolve(), 1800);
@@ -116,7 +70,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
       setFailed(true);
       audioManager?.playWrong();
       const utter = new SpeechSynthesisUtterance(
-        `Out of guesses. The word was ${target}. You may skip or the path remains locked.`,
+        `Out of guesses. The word was ${target.word}. You may skip or the path remains locked.`,
       );
       window.speechSynthesis?.speak(utter);
     } else {
@@ -125,7 +79,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
       const feedback = upper
         .split("")
         .map((ch, i) => {
-          const state = getTileState(upper, target, i);
+          const state = getTileState(upper, target.word, i);
           const pos = ["First", "Second", "Third"][i];
           if (state === "correct")
             return `${pos} letter ${ch}: correct position`;
@@ -240,7 +194,7 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
                 {Array.from({ length: 3 }).map((_, colIdx) => {
                   const letter = displayWord[colIdx] ?? " ";
                   const state = guess
-                    ? getTileState(guess, target, colIdx)
+                    ? getTileState(guess, target.word, colIdx)
                     : "";
                   return (
                     <div
@@ -288,8 +242,8 @@ export function AudioWordle({ audioManager, onSolve, onSkip, onRestart }) {
             role="status"
           >
             {solved
-              ? `🎉 Correct! Word was "${target}"`
-              : `❌ Word was "${target}"`}
+              ? `🎉 Correct! Word was "${target.word}"`
+              : `❌ Word was "${target.word}"`}
           </div>
         )}
 
